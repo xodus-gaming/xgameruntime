@@ -23,6 +23,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(xgameruntime);
 
+static BOOLEAN initialized = FALSE;
+XTaskQueueHandle processQueue = NULL;
 DWORD tlsIndex;
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
@@ -52,7 +54,16 @@ struct initialize_options
 
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const struct initialize_options *options )
 {
+    HRESULT hr;
+
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
+
+    if (!initialized)
+    {
+        if (FAILED(hr = IXThreadingImpl_XTaskQueueCreate( x_threading_impl, XTaskQueueDispatchMode_ThreadPool, XTaskQueueDispatchMode_ThreadPool, &processQueue )))
+            return hr;
+        initialized = TRUE;
+    }
     return S_OK;
 }
 

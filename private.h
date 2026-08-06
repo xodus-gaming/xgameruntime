@@ -34,6 +34,7 @@
 #include <windows.system.profile.h>
 
 extern DWORD tlsIndex;
+extern XTaskQueueHandle processQueue;
 
 extern IXAccessibilityImpl *x_accessibility_impl;
 extern IXAppCaptureImpl *x_app_capture_impl;
