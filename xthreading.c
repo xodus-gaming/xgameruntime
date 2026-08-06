@@ -28,6 +28,11 @@ struct XTaskQueuePortObject
     IUnknown IUnknown_iface;
     LONG ref;
     XTaskQueueDispatchMode mode;
+    TP_WORK **queue;
+    SIZE_T capacity;
+    SIZE_T length;
+    HANDLE ready;
+    HANDLE terminating;
 };
 
 static inline XTaskQueuePortHandle port_impl_from_IUnknown( IUnknown *iface )
@@ -198,36 +203,55 @@ static HRESULT WINAPI x_threading_XAsyncGetResult( IXThreadingImpl *iface, XAsyn
     return E_NOTIMPL;
 }
 
+static void CALLBACK serialized_worker( TP_CALLBACK_INSTANCE *instance, XTaskQueuePortHandle port, TP_WORK *work )
+{
+
+}
+
+static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *port )
+{
+    if (!(port = calloc( 1, sizeof(**port) ))) return E_OUTOFMEMORY;
+    (*port)->IUnknown_iface.lpVtbl = &port_vtbl;
+    (*port)->ref = 1;
+    (*port)->mode = mode;
+
+    if (mode == XTaskQueueDispatchMode_SerializedThreadPool || mode == XTaskQueueDispatchMode_Manual)
+    {
+        (*port)->capacity = 32;
+        if (!((*port)->queue = calloc( 32, sizeof(*(*port)->queue) )))
+        {
+            free( port );
+            return E_OUTOFMEMORY;
+        }
+    }
+
+    if (mode == XTaskQueueDispatchMode_SerializedThreadPool)
+    {
+        SubmitThreadpoolWork( CreateThreadpoolWork( (PTP_WORK_CALLBACK)serialized_worker, *port, NULL ) );
+        (*port)->ready = CreateEventA( NULL, FALSE, FALSE, NULL );
+        (*port)->terminating = CreateEventA( NULL, FALSE, FALSE, NULL );
+    }
+
+    return S_OK;
+}
+
 static HRESULT WINAPI x_threading_XTaskQueueCreate( IXThreadingImpl *iface, XTaskQueueDispatchMode workDispatchMode, XTaskQueueDispatchMode completionDispatchMode, XTaskQueueHandle *queue )
 {
-    XTaskQueuePortHandle completion, work;
-
+    HRESULT hr;
     TRACE( "iface %p, workDispatchMode %d, completionDispatchMode %d, queue %p.\n", iface, workDispatchMode, completionDispatchMode, queue );
-
-    if (!(work = calloc( 1, sizeof(*work) ))) return E_OUTOFMEMORY;
-    work->IUnknown_iface.lpVtbl = &port_vtbl;
-    work->ref = 1;
-    work->mode = workDispatchMode;
-
-    if (!(completion = calloc( 1, sizeof(*completion) )))
-    {
-        free( work );
-        return E_OUTOFMEMORY;
-    }
-    completion->IUnknown_iface.lpVtbl = &port_vtbl;
-    completion->ref = 1;
-    completion->mode = completionDispatchMode;
-
-    if (!(*queue = calloc( 1, sizeof(**queue) )))
-    {
-        free( work );
-        free( completion );
-        return E_OUTOFMEMORY;
-    }
+    if (!(*queue = calloc( 1, sizeof(**queue) ))) return E_OUTOFMEMORY;
     (*queue)->IUnknown_iface.lpVtbl = &queue_vtbl;
     (*queue)->ref = 1;
-    (*queue)->work = work;
-    (*queue)->completion = completion;
+    if (FAILED(hr = create_port( workDispatchMode, &(*queue)->work )))
+    {
+        IUnknown_Release( &(*queue)->IUnknown_iface );
+        return hr;
+    }
+    if (FAILED(hr = create_port( completionDispatchMode, &(*queue)->completion )))
+    {
+        IUnknown_Release( &(*queue)->IUnknown_iface );
+        return hr;
+    }
     return S_OK;
 }
 
@@ -268,7 +292,7 @@ static HRESULT WINAPI x_threading_XTaskQueueDuplicateHandle( IXThreadingImpl *if
 
 static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, UINT32 timeoutInMs )
 {
-    FIXME( "iface %p, queue %p, port %d, timeoutInMs %d stub!\n", iface, queue, port, timeoutInMs );
+    TRACE( "iface %p, queue %p, port %d, timeoutInMs %d.\n", iface, queue, port, timeoutInMs );
     return FALSE;
 }
 
@@ -303,6 +327,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
 {
     struct dispatch_context *work_context;
     XTaskQueuePortHandle handle;
+    PTP_WORK newQueue;
     TP_WORK *work;
 
     FIXME( "iface %p, queue %p, port %d, delayMs %d, callbackContext %p, callback %p semi-stub!\n", iface, queue, port, delayMs, callbackContext, callback );
@@ -344,10 +369,19 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
         return S_OK;
     }
 
-    /* TODO: queue work for Manual and SerializedThreadPool modes */
-    IUnknown_Release( &handle->IUnknown_iface );
-    free( work_context );
-    return E_NOTIMPL;
+    if (handle->capacity == handle->length)
+    {
+        handle->capacity *= 1.5;
+        if (!(newQueue = realloc( handle->queue, handle->capacity * sizeof(*handle->queue) )))
+        {
+            IUnknown_Release( &handle->IUnknown_iface );
+            free( work_context );
+            return E_OUTOFMEMORY;
+        }
+    }
+
+    handle->queue[handle->length++] = work;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueRegisterWaiter( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, HANDLE waitHandle, void *callbackContext, XTaskQueueCallback *callback, XTaskQueueRegistrationToken *token )
@@ -363,8 +397,11 @@ static void WINAPI x_threading_XTaskQueueUnregisterWaiter( IXThreadingImpl *ifac
 
 static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, XTaskQueueHandle queue, BOOLEAN wait, void *callbackContext, XTaskQueueTerminatedCallback *callback )
 {
-    FIXME( "iface %p, queue %p, wait %d, callbackContext %p, callback %p stub!\n", iface, queue, wait, callbackContext, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, queue %p, wait %d, callbackContext %p, callback %p.\n", iface, queue, wait, callbackContext, callback );
+    IUnknown_Release( &queue->IUnknown_iface );
+    SetEvent( queue->work->terminating );
+    SetEvent( queue->completion->terminating );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueRegisterMonitor( IXThreadingImpl *iface, XTaskQueueHandle queue, void *callbackContext, XTaskQueueMonitorCallback *callback, XTaskQueueRegistrationToken *token )
