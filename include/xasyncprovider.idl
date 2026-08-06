@@ -52,7 +52,7 @@ typedef HRESULT __stdcall XAsyncProvider( XAsyncOp op, const XAsyncProviderData 
 struct XAsyncProviderData
 {
     XAsyncBlock *async;
-    SIZE_T *bufferSize;
+    SIZE_T bufferSize;
     void *buffer;
     void *context;
 };
