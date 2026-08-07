@@ -210,7 +210,7 @@ static void CALLBACK serialized_worker( TP_CALLBACK_INSTANCE *instance, XTaskQue
 
 static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *port )
 {
-    if (!(port = calloc( 1, sizeof(**port) ))) return E_OUTOFMEMORY;
+    if (!(*port = calloc( 1, sizeof(**port) ))) return E_OUTOFMEMORY;
     (*port)->IUnknown_iface.lpVtbl = &port_vtbl;
     (*port)->ref = 1;
     (*port)->mode = mode;
