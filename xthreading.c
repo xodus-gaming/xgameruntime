@@ -27,12 +27,14 @@ struct XTaskQueuePortObject
 {
     IUnknown IUnknown_iface;
     LONG ref;
+    LONG queued;
     XTaskQueueDispatchMode mode;
     TP_WORK **queue;
     SIZE_T capacity;
     SIZE_T length;
     HANDLE ready;
     HANDLE terminating;
+    HANDLE terminated;
 };
 
 static inline XTaskQueuePortHandle port_impl_from_IUnknown( IUnknown *iface )
@@ -214,6 +216,8 @@ static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *p
     (*port)->IUnknown_iface.lpVtbl = &port_vtbl;
     (*port)->ref = 1;
     (*port)->mode = mode;
+    (*port)->terminating = CreateEventA( NULL, TRUE, FALSE, NULL );
+    (*port)->terminated = CreateEventA( NULL, TRUE, FALSE, NULL );
 
     if (mode == XTaskQueueDispatchMode_SerializedThreadPool || mode == XTaskQueueDispatchMode_Manual)
     {
@@ -229,7 +233,6 @@ static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *p
     {
         SubmitThreadpoolWork( CreateThreadpoolWork( (PTP_WORK_CALLBACK)serialized_worker, *port, NULL ) );
         (*port)->ready = CreateEventA( NULL, FALSE, FALSE, NULL );
-        (*port)->terminating = CreateEventA( NULL, FALSE, FALSE, NULL );
     }
 
     return S_OK;
@@ -313,8 +316,9 @@ struct dispatch_context
 static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *instance, struct dispatch_context *context, TP_WORK *work )
 {
     Sleep( context->delay );
-    context->callback( context->callbackContext, FALSE );
-    IUnknown_Release( &context->port->IUnknown_iface );
+    context->callback( context->callbackContext, !WaitForSingleObject( context->port->terminating, 0 ) );
+    if (!InterlockedDecrement( &context->port->queued ) && !WaitForSingleObject( context->port->terminating, 0 ))
+        SetEvent( context->port->terminated );
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueSubmitCallback( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, void *callbackContext, XTaskQueueCallback *callback )
@@ -345,17 +349,19 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
 
     if (handle->mode == XTaskQueueDispatchMode_Immediate)
     {
+        InterlockedIncrement( &handle->queued );
         Sleep( delayMs );
-        callback( callbackContext, FALSE );
+        callback( callbackContext, !WaitForSingleObject( handle->terminating, 0 ));
+        if (!InterlockedDecrement( &handle->queued ) && !WaitForSingleObject( handle->terminating, 0 ))
+            SetEvent( handle->terminated );
         return S_OK;
     }
 
     if (!(work_context = calloc( 1, sizeof(*work_context) ))) return E_OUTOFMEMORY;
-    IUnknown_AddRef( &handle->IUnknown_iface );
     work_context->port = handle;
     work_context->callback = callback;
-    work_context->delay = delayMs;
     work_context->callbackContext = callbackContext;
+    work_context->delay = delayMs;
     if (!(work = CreateThreadpoolWork( (PTP_WORK_CALLBACK)dispatch_handler, work_context, NULL )))
     {
         free( work_context );
@@ -364,6 +370,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
 
     if (handle->mode == XTaskQueueDispatchMode_ThreadPool)
     {
+        InterlockedIncrement( &handle->queued );
         SubmitThreadpoolWork( work );
         return S_OK;
     }
@@ -397,9 +404,16 @@ static void WINAPI x_threading_XTaskQueueUnregisterWaiter( IXThreadingImpl *ifac
 static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, XTaskQueueHandle queue, BOOLEAN wait, void *callbackContext, XTaskQueueTerminatedCallback *callback )
 {
     TRACE( "iface %p, queue %p, wait %d, callbackContext %p, callback %p.\n", iface, queue, wait, callbackContext, callback );
-    IUnknown_Release( &queue->IUnknown_iface );
+
     SetEvent( queue->work->terminating );
     SetEvent( queue->completion->terminating );
+    if (wait)
+    {
+        if (queue->work->queued) WaitForSingleObject( queue->work->terminated, INFINITE );
+        if (queue->completion->queued) WaitForSingleObject( queue->completion->terminated, INFINITE );
+    }
+
+    IUnknown_Release( &queue->IUnknown_iface );
     return S_OK;
 }
 
