@@ -315,8 +315,7 @@ struct dispatch_context
 
 static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *instance, struct dispatch_context *context, TP_WORK *work )
 {
-    Sleep( context->delay );
-    context->callback( context->callbackContext, !WaitForSingleObject( context->port->terminating, 0 ) );
+    context->callback( context->callbackContext, !WaitForSingleObject( context->port->terminating, context->delay ) );
     if (!InterlockedDecrement( &context->port->queued ) && !WaitForSingleObject( context->port->terminating, 0 ))
         SetEvent( context->port->terminated );
 }
