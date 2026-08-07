@@ -315,7 +315,6 @@ static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *instance, struct di
     Sleep( context->delay );
     context->callback( context->callbackContext, FALSE );
     IUnknown_Release( &context->port->IUnknown_iface );
-    InterlockedDecrement( &context->port->ref );
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueSubmitCallback( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, void *callbackContext, XTaskQueueCallback *callback )
