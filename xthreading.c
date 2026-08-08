@@ -294,14 +294,19 @@ struct task_context
     XTaskQueuePortHandle port;
     XTaskQueueCallback *callback;
     void *callbackContext;
-    UINT32 delay;
+    HANDLE timer;
 };
 
 static void CALLBACK work_handler( TP_CALLBACK_INSTANCE *, struct task_context *context, TP_WORK * )
 {
-    context->callback( context->callbackContext, !WaitForSingleObject( context->port->terminating, context->delay ) );
+    HANDLE objects[2] = { context->port->terminating, context->timer };
+    DWORD event = WaitForMultipleObjects( 2, objects, FALSE, INFINITE );
+    if (event == 0) context->callback( context->callbackContext, TRUE );
+    else if (event == 1) context->callback( context->callbackContext, FALSE );
     if (!InterlockedDecrement( &context->port->queued ) && !WaitForSingleObject( context->port->terminating, 0 )) SetEvent( context->port->terminated );
     IUnknown_Release( &context->port->IUnknown_iface );
+    CloseHandle( context->timer );
+    free( context );
 }
 
 static HRESULT enqueue_task( struct task_context *context )
@@ -313,6 +318,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
 {
     struct task_context *context;
     XTaskQueuePortHandle handle;
+    LARGE_INTEGER time;
     TP_WORK *work;
     HRESULT hr;
 
@@ -357,10 +363,28 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
         IUnknown_Release( &handle->IUnknown_iface );
         return E_OUTOFMEMORY;
     }
+
     context->port = handle;
     context->callback = callback;
     context->callbackContext = callbackContext;
-    context->delay = delayMs;
+    if (!(context->timer = CreateWaitableTimerW( NULL, TRUE, NULL )))
+    {
+        if (!InterlockedDecrement( &handle->queued ) && !WaitForSingleObject( handle->terminating, 0 )) SetEvent( handle->terminated );
+        IUnknown_Release( &handle->IUnknown_iface );
+        CloseHandle( context->timer );
+        free( context );
+        return HRESULT_FROM_WIN32( GetLastError() );
+    }
+
+    time.QuadPart = delayMs * -10000LL;
+    if (!SetWaitableTimer( context->timer, &time, 0, NULL, NULL, FALSE ))
+    {
+        if (!InterlockedDecrement( &handle->queued ) && !WaitForSingleObject( handle->terminating, 0 )) SetEvent( handle->terminated );
+        IUnknown_Release( &handle->IUnknown_iface );
+        CloseHandle( context->timer );
+        free( context );
+        return HRESULT_FROM_WIN32( GetLastError() );
+    }
 
     switch (handle->mode)
     {
@@ -371,6 +395,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
             {
                 if (!InterlockedDecrement( &handle->queued ) && !WaitForSingleObject( handle->terminating, 0 )) SetEvent( handle->terminated );
                 IUnknown_Release( &handle->IUnknown_iface );
+                CloseHandle( context->timer );
                 free( context );
             }
             return hr;
@@ -380,6 +405,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
             {
                 if (!InterlockedDecrement( &handle->queued ) && !WaitForSingleObject( handle->terminating, 0 )) SetEvent( handle->terminated );
                 IUnknown_Release( &handle->IUnknown_iface );
+                CloseHandle( context->timer );
                 free( context );
                 return HRESULT_FROM_WIN32( GetLastError() );
             }
@@ -389,6 +415,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
         default:
             if (!InterlockedDecrement( &handle->queued ) && !WaitForSingleObject( handle->terminating, 0 )) SetEvent( handle->terminated );
             IUnknown_Release( &handle->IUnknown_iface );
+            CloseHandle( context->timer );
             free( context );
             return E_INVALIDARG;
     }
