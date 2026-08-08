@@ -23,23 +23,30 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(xgameruntime);
 
-static BOOLEAN initialized = FALSE;
 XTaskQueueHandle processQueue = NULL;
+CRITICAL_SECTION processQueueSection;
 DWORD tlsIndex;
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 {
+    XTaskQueueHandle queue;
+
     TRACE( "hinst %p, reason %lu, reserved %p.\n", hinst, reason, reserved );
 
     switch (reason)
     {
         case DLL_PROCESS_ATTACH:
             if ((tlsIndex = TlsAlloc()) == TLS_OUT_OF_INDEXES) return FALSE;
+            InitializeCriticalSection( &processQueueSection );
+            if (SUCCEEDED(IXThreadingImpl_XTaskQueueCreate( x_threading_impl, XTaskQueueDispatchMode_ThreadPool, XTaskQueueDispatchMode_ThreadPool, &queue )))
+                IXThreadingImpl_XTaskQueueSetCurrentProcessTaskQueue( x_threading_impl, queue );
         case DLL_THREAD_ATTACH:
             TlsSetValue( tlsIndex, FALSE );
             break;
         case DLL_PROCESS_DETACH:
             TlsFree( tlsIndex );
+            IXThreadingImpl_XTaskQueueSetCurrentProcessTaskQueue( x_threading_impl, NULL );
+            DeleteCriticalSection( &processQueueSection );
             break;
     }
     return TRUE;
@@ -54,16 +61,7 @@ struct initialize_options
 
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const struct initialize_options *options )
 {
-    HRESULT hr;
-
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
-
-    if (!initialized)
-    {
-        if (FAILED(hr = IXThreadingImpl_XTaskQueueCreate( x_threading_impl, XTaskQueueDispatchMode_ThreadPool, XTaskQueueDispatchMode_ThreadPool, &processQueue )))
-            return hr;
-        initialized = TRUE;
-    }
     return S_OK;
 }
 

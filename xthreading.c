@@ -527,18 +527,26 @@ static void WINAPI x_threading_XTaskQueueUnregisterMonitor( IXThreadingImpl *ifa
 static BOOLEAN WINAPI x_threading_XTaskQueueGetCurrentProcessTaskQueue( IXThreadingImpl *iface, XTaskQueueHandle *queue )
 {
     TRACE( "iface %p, queue %p.\n", iface, queue );
-    if (!processQueue) return FALSE;
+    EnterCriticalSection( &processQueueSection );
+    if (!processQueue)
+    {
+        LeaveCriticalSection( &processQueueSection );
+        return FALSE;
+    }
     IUnknown_AddRef( &processQueue->IUnknown_iface );
     *queue = processQueue;
+    LeaveCriticalSection( &processQueueSection );
     return TRUE;
 }
 
 static void WINAPI x_threading_XTaskQueueSetCurrentProcessTaskQueue( IXThreadingImpl *iface, XTaskQueueHandle queue )
 {
     TRACE( "iface %p, queue %p.\n", iface, queue );
+    EnterCriticalSection( &processQueueSection );
     if (processQueue) IUnknown_Release( &processQueue->IUnknown_iface );
     if (queue) IUnknown_AddRef( &queue->IUnknown_iface );
     processQueue = queue;
+    LeaveCriticalSection( &processQueueSection );
 }
 
 static HRESULT WINAPI x_threading_XThreadSetTimeSensitive( IXThreadingImpl *iface, BOOLEAN isTimeSensitiveThread )

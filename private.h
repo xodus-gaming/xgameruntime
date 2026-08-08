@@ -35,6 +35,7 @@
 
 extern DWORD tlsIndex;
 extern XTaskQueueHandle processQueue;
+extern CRITICAL_SECTION processQueueSection;
 
 extern IXAccessibilityImpl *x_accessibility_impl;
 extern IXAppCaptureImpl *x_app_capture_impl;
