@@ -273,6 +273,11 @@ static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHan
         }
         else
         {
+            if (port->mode == XTaskQueueDispatchMode_Immediate)
+            {
+                SetEvent( port->terminated );
+                return;
+            }
             while ((entry = next))
             {
                 entry->callback( entry->callbackContext, TRUE );
@@ -282,6 +287,7 @@ static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHan
                 free( entry );
                 IUnknown_Release( &port->IUnknown_iface );
             }
+            port->head = NULL;
             return;
         }
     }
@@ -505,6 +511,32 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
     if (!queue->work->queued) SetEvent( queue->work->terminated );
     if (!queue->completion->queued) SetEvent( queue->completion->terminated );
     if (wait) WaitForMultipleObjects( 2, objects, TRUE, INFINITE );
+    if (queue->work->mode == XTaskQueueDispatchMode_Immediate && !WaitForSingleObject( queue->work->terminated, INFINITE ))
+    {
+        struct task_context *entry, *next = queue->work->head;
+        while ((entry = next))
+        {
+            entry->callback( entry->callbackContext, TRUE );
+            CloseHandle( entry->timer );
+            next = entry->next;
+            free( entry );
+            IUnknown_Release( &queue->work->IUnknown_iface );
+        }
+        queue->work->head = NULL;
+    }
+    if (queue->completion->mode == XTaskQueueDispatchMode_Immediate && !WaitForSingleObject( queue->completion->terminated, INFINITE ))
+    {
+        struct task_context *entry, *next = queue->completion->head;
+        while ((entry = next))
+        {
+            entry->callback( entry->callbackContext, TRUE );
+            CloseHandle( entry->timer );
+            next = entry->next;
+            free( entry );
+            IUnknown_Release( &queue->completion->IUnknown_iface );
+        }
+        queue->completion->head = NULL;
+    }
     IUnknown_Release( &queue->IUnknown_iface );
     return S_OK;
 }
