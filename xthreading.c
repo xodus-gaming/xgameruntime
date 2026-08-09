@@ -26,10 +26,18 @@ WINE_DEFAULT_DEBUG_CHANNEL(gdkc);
 struct task_context
 {
     struct task_context *next;
+    XTaskQueueHandle queue;
     XTaskQueuePortHandle port;
     XTaskQueueCallback *callback;
     void *callbackContext;
     HANDLE timer;
+};
+
+struct monitor_context
+{
+    XTaskQueueMonitorCallback *callback;
+    void *callbackContext;
+    XTaskQueueRegistrationToken token;
 };
 
 struct XTaskQueuePortObject
@@ -90,6 +98,14 @@ struct XTaskQueueObject
     LONG ref;
     XTaskQueuePortHandle work;
     XTaskQueuePortHandle completion;
+    struct
+    {
+        struct monitor_context *entries;
+        CRITICAL_SECTION cs;
+        UINT32 capacity;
+        UINT32 length;
+        UINT64 token;
+    } monitors;
 };
 
 static inline XTaskQueueHandle queue_impl_from_IUnknown( IUnknown *iface )
@@ -112,8 +128,10 @@ static ULONG WINAPI queue_Release( IUnknown *iface )
     TRACE( "iface %p decreasing refcount to %lu.\n", iface, ref );
     if (!ref)
     {
+        DeleteCriticalSection( &impl->monitors.cs );
         IUnknown_Release( &impl->work->IUnknown_iface );
         IUnknown_Release( &impl->completion->IUnknown_iface );
+        if (impl->monitors.entries) free( impl->monitors.entries );
         free( impl );
     }
     return ref;
@@ -223,20 +241,74 @@ static HRESULT WINAPI x_threading_XAsyncGetResult( IXThreadingImpl *iface, XAsyn
     return E_NOTIMPL;
 }
 
+struct monitor_handler_context
+{
+    HANDLE finished;
+    XTaskQueueHandle queue;
+    XTaskQueuePort port;
+    UINT32 length;
+};
+
+static void CALLBACK monitor_handler( TP_CALLBACK_INSTANCE *, struct monitor_handler_context *context, TP_WORK * )
+{
+    struct monitor_context *monitors = (struct monitor_context *)(context + 1);
+    TRACE( "context %p.\n", context );
+    for (UINT32 i = 0; i < context->length; i++) monitors[i].callback( monitors[i].callbackContext, context->queue, context->port );
+    SetEvent( context->finished );
+    free( context );
+}
+
+static HANDLE invoke_monitors( XTaskQueueHandle queue, XTaskQueuePort port )
+{
+    struct monitor_handler_context *context;
+    HANDLE finished = NULL;
+    TP_WORK *work;
+
+    TRACE( "queue %p, port %d.\n", queue, port );
+
+    EnterCriticalSection( &queue->monitors.cs );
+    if ((context = calloc( 1, sizeof(*context) + queue->monitors.length * sizeof(struct monitor_context) )))
+    {
+        finished = CreateEventA( NULL, TRUE, FALSE, NULL );
+        context->finished = finished;
+        context->queue = queue;
+        context->port = port;
+        context->length = queue->monitors.length;
+        memcpy( context + 1, context->queue->monitors.entries, context->queue->monitors.length * sizeof(struct monitor_context) );
+        if ((work = CreateThreadpoolWork( (PTP_WORK_CALLBACK)monitor_handler, context, NULL ))) SubmitThreadpoolWork( work );
+        else
+        {
+            CloseHandle( finished );
+            finished = NULL;
+            free( context );
+        }
+    }
+    LeaveCriticalSection( &queue->monitors.cs );
+    return finished;
+}
+
 static void CALLBACK work_handler( TP_CALLBACK_INSTANCE *, struct task_context *context, TP_WORK * )
 {
-    HANDLE objects[2] = { context->port->terminating, context->timer };
+    HANDLE finished, objects[2] = { context->port->terminating, context->timer };
+
+    TRACE( "context %p.\n", context );
+
     WaitForMultipleObjects( 2, objects, FALSE, INFINITE );
+    finished = invoke_monitors( context->queue, context->port->mode );
     context->callback( context->callbackContext, !WaitForSingleObject( context->port->terminating, 0 ) );
+    if (finished) WaitForSingleObject( finished, INFINITE );
     if (!InterlockedDecrement( &context->port->queued ) && !WaitForSingleObject( context->port->terminating, 0 )) SetEvent( context->port->terminated );
     IUnknown_Release( &context->port->IUnknown_iface );
     CloseHandle( context->timer );
+    CloseHandle( finished );
     free( context );
 }
 
 static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHandle port, TP_WORK * )
 {
     /* worker for SerializedThreadPool and delayed Immediate modes */
+    TRACE( "port %p.\n", port );
+
     while (TRUE)
     {
         struct task_context *entry, *next = port->head, *parent = NULL;
@@ -252,10 +324,13 @@ static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHan
                     else InterlockedExchangePointer( (void **)&port->head, next );
                     if (port->mode == XTaskQueueDispatchMode_SerializedThreadPool)
                     {
+                        HANDLE finished = invoke_monitors( entry->queue, port->mode );
                         entry->callback( entry->callbackContext, FALSE );
+                        if (finished) WaitForSingleObject( finished, INFINITE );
                         if (!InterlockedDecrement( &port->queued ) && !WaitForSingleObject( port->terminating, 0 )) SetEvent( port->terminated );
                         IUnknown_Release( &port->IUnknown_iface );
                         CloseHandle( entry->timer );
+                        CloseHandle( finished );
                         free( entry );
                     }
                     else if ((work = CreateThreadpoolWork( (PTP_WORK_CALLBACK)work_handler, entry, NULL ))) SubmitThreadpoolWork( work );
@@ -280,9 +355,12 @@ static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHan
             }
             while ((entry = next))
             {
+                HANDLE finished = invoke_monitors( entry->queue, port->mode );
                 entry->callback( entry->callbackContext, TRUE );
+                if (finished) WaitForSingleObject( finished, INFINITE );
                 if (!InterlockedDecrement( &port->queued ) && !WaitForSingleObject( port->terminating, 0 )) SetEvent( port->terminated );
                 CloseHandle( entry->timer );
+                CloseHandle( finished );
                 next = entry->next;
                 free( entry );
                 IUnknown_Release( &port->IUnknown_iface );
@@ -295,6 +373,8 @@ static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHan
 
 static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *port )
 {
+    TRACE( "mode %d, port %p.\n", mode, port );
+
     if (!(*port = calloc( 1, sizeof(**port) ))) return E_OUTOFMEMORY;
     (*port)->IUnknown_iface.lpVtbl = &port_vtbl;
     (*port)->ref = 1;
@@ -318,16 +398,25 @@ static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *p
 static HRESULT WINAPI x_threading_XTaskQueueCreate( IXThreadingImpl *iface, XTaskQueueDispatchMode workDispatchMode, XTaskQueueDispatchMode completionDispatchMode, XTaskQueueHandle *queue )
 {
     HRESULT hr;
+
     TRACE( "iface %p, workDispatchMode %d, completionDispatchMode %d, queue %p.\n", iface, workDispatchMode, completionDispatchMode, queue );
+
     if (!(*queue = calloc( 1, sizeof(**queue) ))) return E_OUTOFMEMORY;
     (*queue)->IUnknown_iface.lpVtbl = &queue_vtbl;
     (*queue)->ref = 1;
+    (*queue)->monitors.capacity = 32;
+    InitializeCriticalSection( &(*queue)->monitors.cs );
     if (FAILED(hr = create_port( workDispatchMode, &(*queue)->work )))
     {
         IUnknown_Release( &(*queue)->IUnknown_iface );
         return hr;
     }
     if (FAILED(hr = create_port( completionDispatchMode, &(*queue)->completion )))
+    {
+        IUnknown_Release( &(*queue)->IUnknown_iface );
+        return hr;
+    }
+    if (!((*queue)->monitors.entries = calloc( 32, sizeof(*(*queue)->monitors.entries) )))
     {
         IUnknown_Release( &(*queue)->IUnknown_iface );
         return hr;
@@ -344,6 +433,7 @@ static HRESULT WINAPI x_threading_XTaskQueueCreateComposite( IXThreadingImpl *if
     (*queue)->completion = completionPort;
     IUnknown_AddRef( &workPort->IUnknown_iface );
     IUnknown_AddRef( &completionPort->IUnknown_iface );
+    InitializeCriticalSection( &(*queue)->monitors.cs );
     return S_OK;
 }
 
@@ -436,6 +526,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
         return E_OUTOFMEMORY;
     }
 
+    context->queue = queue;
     context->port = handle;
     context->callback = callback;
     context->callbackContext = callbackContext;
@@ -543,13 +634,45 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
 static HRESULT WINAPI x_threading_XTaskQueueRegisterMonitor( IXThreadingImpl *iface, XTaskQueueHandle queue, void *callbackContext, XTaskQueueMonitorCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, callbackContext %p, callback %p, token %p stub!\n", iface, queue, callbackContext, callback, token );
-    return E_NOTIMPL;
+    TRACE( "iface %p, queue %p, callbackContext %p, callback %p, token %p.\n", iface, queue, callbackContext, callback, token );
+
+    if (!queue || !callback || !token) return E_POINTER;
+    EnterCriticalSection( &queue->monitors.cs );
+    if (queue->monitors.capacity == queue->monitors.length)
+    {
+        UINT32 capacity = queue->monitors.capacity * 1.5;
+        struct monitor_context *entries;
+        if (!(entries = realloc( queue->monitors.entries, capacity * sizeof(*entries) )))
+        {
+            LeaveCriticalSection( &queue->monitors.cs );
+            return E_OUTOFMEMORY;
+        }
+        queue->monitors.capacity = capacity;
+        queue->monitors.entries = entries;
+    }
+    queue->monitors.entries[queue->monitors.length].callback = callback;
+    queue->monitors.entries[queue->monitors.length].callbackContext = callbackContext;
+    token->token = queue->monitors.token++;
+    queue->monitors.entries[queue->monitors.length++].token = *token;
+    LeaveCriticalSection( &queue->monitors.cs );
+    return S_OK;
 }
 
 static void WINAPI x_threading_XTaskQueueUnregisterMonitor( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueueRegistrationToken token )
 {
-    FIXME( "iface %p, queue %p, token %p stub!\n", iface, queue, &token );
+    TRACE( "iface %p, queue %p, token %p.\n", iface, queue, &token );
+
+    if (!queue) return;
+    EnterCriticalSection( &queue->monitors.cs );
+    for (UINT32 i = 0; i < queue->monitors.length; i++)
+    {
+        if (queue->monitors.entries[i].token.token == token.token)
+        {
+            memmove( queue->monitors.entries + i, queue->monitors.entries + i + 1, (--queue->monitors.length - i) * sizeof(*queue->monitors.entries) );
+            break;
+        }
+    }
+    LeaveCriticalSection( &queue->monitors.cs );
 }
 
 static BOOLEAN WINAPI x_threading_XTaskQueueGetCurrentProcessTaskQueue( IXThreadingImpl *iface, XTaskQueueHandle *queue )
