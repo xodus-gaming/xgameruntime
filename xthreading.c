@@ -223,11 +223,24 @@ static HRESULT WINAPI x_threading_XAsyncGetResult( IXThreadingImpl *iface, XAsyn
     return E_NOTIMPL;
 }
 
-static void CALLBACK serialized_dispatcher( TP_CALLBACK_INSTANCE *, XTaskQueuePortHandle port, TP_WORK * )
+static void CALLBACK work_handler( TP_CALLBACK_INSTANCE *, struct task_context *context, TP_WORK * )
 {
+    HANDLE objects[2] = { context->port->terminating, context->timer };
+    WaitForMultipleObjects( 2, objects, FALSE, INFINITE );
+    context->callback( context->callbackContext, !WaitForSingleObject( context->port->terminating, 0 ) );
+    if (!InterlockedDecrement( &context->port->queued ) && !WaitForSingleObject( context->port->terminating, 0 )) SetEvent( context->port->terminated );
+    IUnknown_Release( &context->port->IUnknown_iface );
+    CloseHandle( context->timer );
+    free( context );
+}
+
+static void CALLBACK dispatch_handler( TP_CALLBACK_INSTANCE *, XTaskQueuePortHandle port, TP_WORK * )
+{
+    /* worker for SerializedThreadPool and delayed Immediate modes */
     while (TRUE)
     {
         struct task_context *entry, *next = port->head, *parent = NULL;
+        TP_WORK *work;
         if (WaitForSingleObject( port->terminating, 0 ) == WAIT_TIMEOUT)
         {
             while ((entry = next))
@@ -235,13 +248,24 @@ static void CALLBACK serialized_dispatcher( TP_CALLBACK_INSTANCE *, XTaskQueuePo
                 next = entry->next;
                 if (!WaitForSingleObject( entry->timer, 0 ))
                 {
-                    entry->callback( entry->callbackContext, !WaitForSingleObject( port->terminating, 0 ) );
-                    if (!InterlockedDecrement( &port->queued ) && !WaitForSingleObject( port->terminating, 0 )) SetEvent( port->terminated );
-                    CloseHandle( entry->timer );
                     if (parent) InterlockedExchangePointer( (void **)&parent->next, next );
                     else InterlockedExchangePointer( (void **)&port->head, next );
-                    IUnknown_Release( &port->IUnknown_iface );
-                    free( entry );
+                    if (port->mode == XTaskQueueDispatchMode_SerializedThreadPool)
+                    {
+                        entry->callback( entry->callbackContext, FALSE );
+                        if (!InterlockedDecrement( &port->queued ) && !WaitForSingleObject( port->terminating, 0 )) SetEvent( port->terminated );
+                        IUnknown_Release( &port->IUnknown_iface );
+                        CloseHandle( entry->timer );
+                        free( entry );
+                    }
+                    else if ((work = CreateThreadpoolWork( (PTP_WORK_CALLBACK)work_handler, entry, NULL ))) SubmitThreadpoolWork( work );
+                    else
+                    {
+                        if (!InterlockedDecrement( &port->queued ) && !WaitForSingleObject( port->terminating, 0 )) SetEvent( port->terminated );
+                        IUnknown_Release( &port->IUnknown_iface );
+                        CloseHandle( entry->timer );
+                        free( entry );
+                    }
                     break;
                 }
                 parent = entry;
@@ -263,11 +287,6 @@ static void CALLBACK serialized_dispatcher( TP_CALLBACK_INSTANCE *, XTaskQueuePo
     }
 }
 
-static void immediate_dispatcher( TP_CALLBACK_INSTANCE *, XTaskQueuePortHandle port, TP_WORK * )
-{
-    /* todo */
-}
-
 static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *port )
 {
     if (!(*port = calloc( 1, sizeof(**port) ))) return E_OUTOFMEMORY;
@@ -276,11 +295,11 @@ static HRESULT create_port( XTaskQueueDispatchMode mode, XTaskQueuePortHandle *p
     (*port)->mode = mode;
     (*port)->terminating = CreateEventA( NULL, TRUE, FALSE, NULL );
     (*port)->terminated = CreateEventA( NULL, TRUE, FALSE, NULL );
-    if (mode == XTaskQueueDispatchMode_Manual || mode == XTaskQueueDispatchMode_SerializedThreadPool || mode == XTaskQueueDispatchMode_Immediate)
+    if (mode == XTaskQueueDispatchMode_SerializedThreadPool || mode == XTaskQueueDispatchMode_Immediate)
     {
         TP_WORK *work;
         if (mode == XTaskQueueDispatchMode_Manual) return S_OK;
-        if (!(work = CreateThreadpoolWork( mode == XTaskQueueDispatchMode_Immediate ? (PTP_WORK_CALLBACK)immediate_dispatcher : (PTP_WORK_CALLBACK)serialized_dispatcher, *port, NULL )))
+        if (!(work = CreateThreadpoolWork( (PTP_WORK_CALLBACK)dispatch_handler, *port, NULL )))
         {
             free( *port );
             return E_OUTOFMEMORY;
@@ -360,18 +379,6 @@ static void WINAPI x_threading_XTaskQueueCloseHandle( IXThreadingImpl *iface, XT
 static HRESULT WINAPI x_threading_XTaskQueueSubmitCallback( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, void *callbackContext, XTaskQueueCallback *callback )
 {
     return IXThreadingImpl_XTaskQueueSubmitDelayedCallback( iface, queue, port, 0, callbackContext, callback );
-}
-
-static void CALLBACK work_handler( TP_CALLBACK_INSTANCE *, struct task_context *context, TP_WORK * )
-{
-    HANDLE objects[2] = { context->port->terminating, context->timer };
-    DWORD event = WaitForMultipleObjects( 2, objects, FALSE, INFINITE );
-    if (event == 0) context->callback( context->callbackContext, TRUE );
-    else if (event == 1) context->callback( context->callbackContext, FALSE );
-    if (!InterlockedDecrement( &context->port->queued ) && !WaitForSingleObject( context->port->terminating, 0 )) SetEvent( context->port->terminated );
-    IUnknown_Release( &context->port->IUnknown_iface );
-    CloseHandle( context->timer );
-    free( context );
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, UINT32 delayMs, void *callbackContext, XTaskQueueCallback *callback )
