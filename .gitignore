@@ -1,0 +1,2 @@
+# Local backups of upstream files, kept while patching
+*.orig

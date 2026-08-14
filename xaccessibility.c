@@ -99,34 +99,77 @@ static HRESULT WINAPI x_accessibility_XSpeechToTextSendString( IXAccessibilityIm
     return E_NOTIMPL;
 }
 
+/*
+ * No text-to-speech backend is wired up yet, but the synthesizer object still
+ * has to be creatable: titles probe it during start-up and treat a failed
+ * XSpeechSynthesizerCreate as an exception rather than as "narration is off".
+ * Minecraft throws in a tight loop when this returns E_NOTIMPL. So hand back a
+ * real, closable handle that reports no installed voices -- an honest
+ * "synthesis unavailable" -- rather than failing the creation itself.
+ */
+struct speech_synthesizer
+{
+    char voice_id[128];
+};
+
+static inline struct speech_synthesizer *speech_synthesizer_from_handle( XSpeechSynthesizerHandle handle )
+{
+    return (struct speech_synthesizer *)handle;
+}
+
 static HRESULT WINAPI x_accessibility_XSpeechSynthesizerEnumerateInstalledVoices( IXAccessibilityImpl2 *iface, void *context, XSpeechSynthesizerInstalledVoicesCallback *callback )
 {
-    FIXME( "iface %p, context %p, callback %p stub!\n", iface, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, context %p, callback %p: no voices installed.\n", iface, context, callback );
+
+    if (!callback) return E_INVALIDARG;
+    /* Zero voices installed, so the callback is simply never invoked. */
+    return S_OK;
 }
 
 static HRESULT WINAPI x_accessibility_XSpeechSynthesizerCreate( IXAccessibilityImpl2 *iface, XSpeechSynthesizerHandle *speechSynthesizer )
 {
-    FIXME( "iface %p, speechSynthesizer %p stub!\n", iface, speechSynthesizer );
-    return E_NOTIMPL;
+    struct speech_synthesizer *impl;
+
+    TRACE( "iface %p, speechSynthesizer %p.\n", iface, speechSynthesizer );
+
+    if (!speechSynthesizer) return E_INVALIDARG;
+    if (!(impl = calloc( 1, sizeof(*impl) ))) return E_OUTOFMEMORY;
+
+    *speechSynthesizer = (XSpeechSynthesizerHandle)impl;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_accessibility_XSpeechSynthesizerCloseHandle( IXAccessibilityImpl2 *iface, XSpeechSynthesizerHandle speechSynthesizer )
 {
-    FIXME( "iface %p, speechSynthesizer %p stub!\n", iface, speechSynthesizer );
-    return E_NOTIMPL;
+    TRACE( "iface %p, speechSynthesizer %p.\n", iface, speechSynthesizer );
+
+    if (!speechSynthesizer) return E_INVALIDARG;
+    free( speech_synthesizer_from_handle( speechSynthesizer ) );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_accessibility_XSpeechSynthesizerSetDefaultVoice( IXAccessibilityImpl2 *iface, XSpeechSynthesizerHandle speechSynthesizer )
 {
-    FIXME( "iface %p, speechSynthesizer %p stub!\n", iface, speechSynthesizer );
-    return E_NOTIMPL;
+    struct speech_synthesizer *impl = speech_synthesizer_from_handle( speechSynthesizer );
+
+    TRACE( "iface %p, speechSynthesizer %p.\n", iface, speechSynthesizer );
+
+    if (!impl) return E_INVALIDARG;
+    impl->voice_id[0] = 0;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_accessibility_XSpeechSynthesizerSetCustomVoice( IXAccessibilityImpl2 *iface, XSpeechSynthesizerHandle speechSynthesizer, const char *voiceId )
 {
-    FIXME( "iface %p, speechSynthesizer %p, voiceId %s stub!\n", iface, speechSynthesizer, debugstr_a( voiceId ) );
-    return E_NOTIMPL;
+    struct speech_synthesizer *impl = speech_synthesizer_from_handle( speechSynthesizer );
+
+    TRACE( "iface %p, speechSynthesizer %p, voiceId %s.\n", iface, speechSynthesizer, debugstr_a( voiceId ) );
+
+    if (!impl || !voiceId) return E_INVALIDARG;
+    /* Remembered, but nothing enumerates voices to match it against, so this
+     * cannot meaningfully reject an unknown id. */
+    lstrcpynA( impl->voice_id, voiceId, ARRAY_SIZE(impl->voice_id) );
+    return S_OK;
 }
 
 static HRESULT WINAPI x_accessibility_XSpeechSynthesizerCreateStreamFromText( IXAccessibilityImpl2 *iface, XSpeechSynthesizerHandle speechSynthesizer, const char *text, XSpeechSynthesizerStreamHandle *speechSynthesisStream )

@@ -22,6 +22,7 @@
 
 #include <roapi.h>
 #include <wine/debug.h>
+#include <wine/unixlib.h>
 #include <winstring.h>
 
 #include <xaccessibility.h>
@@ -90,3 +91,22 @@ extern IXUserImpl *x_user_impl;
 extern IXUserDeviceImpl *x_user_device_impl;
 
 HRESULT WINAPI QueryApiImpl( const GUID *classId, REFIID interfaceId, void **out );
+
+/* xthreading.c -- for components that must answer an XAsyncBlock without
+ * standing up a full XAsyncProvider. xasync_complete_static() attaches async
+ * state to the block and completes it with a fixed result, dispatching the
+ * caller's completion routine on the block's queue exactly as a real async
+ * operation would; xasync_peek_status() reads that result back out in the
+ * matching *Result() call. */
+HRESULT xasync_complete_static( XAsyncBlock *async, HRESULT result );
+HRESULT xasync_peek_status( XAsyncBlock *async );
+
+/*
+ * xodus-service, the other half of the account. See unixlib.h for why this
+ * cannot be a plain socket on the PE side.
+ */
+#define XGAMERUNTIME_UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
+
+HRESULT xodus_service_call( UINT16 message_type, const char *request, char **reply );
+char *xodus_xml_element( const char *xml, const char *name );
+char *xodus_game_config_value( const char *element );

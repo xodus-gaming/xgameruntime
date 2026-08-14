@@ -68,10 +68,21 @@ static ULONG WINAPI x_game_protocol_Release( IXGameProtocolImpl *iface )
     return ref;
 }
 
+static LONG64 protocol_activation_token;
+
+/* Protocol activation is how a title gets launched from a URI. Nothing here
+ * delivers such launches yet, but refusing the registration is worse than
+ * accepting a quiet one: callers register during start-up and read a failure
+ * as a broken runtime rather than as "no URI launches will arrive". */
 static HRESULT WINAPI x_game_protocol_XGameProtocolRegisterForActivation( IXGameProtocolImpl *iface, XTaskQueueHandle queue, void *context, XGameProtocolActivationCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, context %p, callback %p, token %p stub!\n", iface, queue, context, callback, token );
-    return E_NOTIMPL;
+    FIXME( "iface %p, queue %p, context %p, callback %p, token %p: accepted, no activations will be raised.\n",
+           iface, queue, context, callback, token );
+
+    if (!callback || !token) return E_INVALIDARG;
+
+    token->token = InterlockedIncrement64( &protocol_activation_token );
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_game_protocol_XGameProtocolUnregisterForActivation( IXGameProtocolImpl *iface, XTaskQueueRegistrationToken token, BOOLEAN wait )

@@ -101,14 +101,19 @@ static HRESULT WINAPI x_system_XSystemGetXboxLiveSandboxId( IXSystemImpl5 *iface
 
     TRACE( "iface %p, sandboxIdSize %d, sandboxId %p, sandboxIdUsed %p\n", iface, sandboxIdSize, sandboxId, sandboxIdUsed );
 
-    if (!sandboxId || !sandboxIdUsed)
-        return E_POINTER;
+    if (!sandboxId) return E_POINTER;
 
     if (sandboxIdSize < XSystemXboxLiveSandboxIdMaxBytes)
         return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
 
     strcpy_s( sandboxId, sandboxIdSize, Id );
-    *sandboxIdUsed = strlen( Id ) + 1;
+    /* sandboxIdUsed is optional: a caller that sized the buffer with
+     * XSystemXboxLiveSandboxIdMaxBytes has no use for the length and passes
+     * NULL. Rejecting that was fatal to titles that check the result --
+     * Asphalt Legends reports "Could not obtain Sandbox Id from System!" and
+     * never initializes Xbox Live at all, so it never signs in, never asks for
+     * a token and never opens a socket. */
+    if (sandboxIdUsed) *sandboxIdUsed = strlen( Id ) + 1;
     return S_OK;
 }
 

@@ -33,6 +33,10 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
     {
         case DLL_PROCESS_ATTACH:
             if ((tlsIndex = TlsAlloc()) == TLS_OUT_OF_INDEXES) return FALSE;
+            /* The unix side is only needed to reach xodus-service, so a failure
+             * here must not take the whole DLL down: everything except the
+             * account calls works without it. */
+            if (__wine_init_unix_call()) WARN( "no unix library; xodus-service is unreachable.\n" );
         case DLL_THREAD_ATTACH:
             TlsSetValue( tlsIndex, FALSE );
             break;

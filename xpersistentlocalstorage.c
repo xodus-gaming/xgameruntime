@@ -21,6 +21,10 @@
 
 #include "private.h"
 
+/* Used to give each title its own storage folder. Exported by kernelbase (and
+ * forwarded from kernel32), but wine's appmodel.h does not declare it. */
+LONG WINAPI GetCurrentPackageFamilyName( UINT32 *length, WCHAR *name );
+
 struct x_persistent_local_storage
 {
     IXPersistentLocalStorageImpl3 IXPersistentLocalStorageImpl3_iface;
@@ -70,22 +74,124 @@ static ULONG WINAPI x_persistent_local_storage_Release( IXPersistentLocalStorage
     return ref;
 }
 
+/*
+ * Persistent local storage is the title's private writable folder. E_NOTIMPL is
+ * not a safe way to say "unavailable" here: callers ask for the path length
+ * first and then use it, so a stub that never writes the out parameter leaves
+ * them acting on an uninitialised size. Asphalt Legends dereferences null
+ * immediately afterwards and dies before drawing a frame. Provide a real
+ * directory instead.
+ *
+ * Location mirrors where a packaged app's local state lives on Windows, keyed
+ * by package family name so two titles cannot collide:
+ *   %LOCALAPPDATA%\Packages\<family>\PersistentLocalStorage\
+ * The trailing separator is part of the contract -- callers concatenate file
+ * names straight onto it.
+ */
+static char pls_path[MAX_PATH * 3];
+static INIT_ONCE pls_path_once = INIT_ONCE_STATIC_INIT;
+
+/* CreateDirectoryW only creates the leaf, so make each component in turn. */
+static void create_directory_tree( WCHAR *path )
+{
+    WCHAR *p;
+
+    for (p = path; *p; p++)
+    {
+        if (*p != '\\' || p == path) continue;
+        *p = 0;
+        CreateDirectoryW( path, NULL );
+        *p = '\\';
+    }
+    CreateDirectoryW( path, NULL );
+}
+
+static BOOL WINAPI init_pls_path( INIT_ONCE *once, void *param, void **context )
+{
+    WCHAR path[MAX_PATH], family[256];
+    UINT32 family_len = ARRAY_SIZE(family);
+
+    if (!GetEnvironmentVariableW( L"LOCALAPPDATA", path, ARRAY_SIZE(path) ))
+    {
+        ERR( "LOCALAPPDATA is not set, persistent local storage is unavailable\n" );
+        return TRUE;
+    }
+
+    /* An unpackaged process has no family name; keep it in its own folder
+     * rather than letting every such title share one. */
+    if (GetCurrentPackageFamilyName( &family_len, family )) lstrcpyW( family, L"UnknownPackage" );
+
+    lstrcatW( path, L"\\Packages\\" );
+    lstrcatW( path, family );
+    lstrcatW( path, L"\\PersistentLocalStorage\\" );
+    create_directory_tree( path );
+
+    if (!WideCharToMultiByte( CP_ACP, 0, path, -1, pls_path, sizeof(pls_path), NULL, NULL ))
+        pls_path[0] = 0;
+
+    TRACE( "persistent local storage at %s\n", debugstr_a( pls_path ) );
+    return TRUE;
+}
+
+static const char *persistent_local_storage_path(void)
+{
+    InitOnceExecuteOnce( &pls_path_once, init_pls_path, NULL, NULL );
+    return pls_path[0] ? pls_path : NULL;
+}
+
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetPath( IXPersistentLocalStorageImpl3 *iface, SIZE_T pathSize, char *path, SIZE_T *pathUsed )
 {
-    FIXME( "iface %p, pathSize %Iu, path %p, pathUsed %p stub!\n", iface, pathSize, path, pathUsed );
-    return E_NOTIMPL;
+    const char *storage = persistent_local_storage_path();
+    SIZE_T needed;
+
+    TRACE( "iface %p, pathSize %Iu, path %p, pathUsed %p.\n", iface, pathSize, path, pathUsed );
+
+    if (!storage) return E_FAIL;
+    if (!path) return E_POINTER;
+
+    needed = strlen( storage ) + 1;
+    if (pathSize < needed) return E_NOT_SUFFICIENT_BUFFER;
+
+    memcpy( path, storage, needed );
+    if (pathUsed) *pathUsed = needed;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetPathSize( IXPersistentLocalStorageImpl3 *iface, SIZE_T *pathSize )
 {
-    FIXME( "iface %p, pathSize %p stub!\n", iface, pathSize );
-    return E_NOTIMPL;
+    const char *storage = persistent_local_storage_path();
+
+    TRACE( "iface %p, pathSize %p.\n", iface, pathSize );
+
+    if (!pathSize) return E_POINTER;
+    if (!storage) return E_FAIL;
+
+    *pathSize = strlen( storage ) + 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetSpaceInfo( IXPersistentLocalStorageImpl3 *iface, XPersistentLocalStorageSpaceInfo *info )
 {
-    FIXME( "iface %p, info %p stub!\n", iface, info );
-    return E_NOTIMPL;
+    const char *storage = persistent_local_storage_path();
+    ULARGE_INTEGER available, total, free_bytes;
+    WCHAR path[MAX_PATH];
+
+    TRACE( "iface %p, info %p.\n", iface, info );
+
+    if (!info) return E_POINTER;
+    if (!storage) return E_FAIL;
+    if (!MultiByteToWideChar( CP_ACP, 0, storage, -1, path, ARRAY_SIZE(path) ))
+        return HRESULT_FROM_WIN32( GetLastError() );
+    if (!GetDiskFreeSpaceExW( path, &available, &total, &free_bytes ))
+        return HRESULT_FROM_WIN32( GetLastError() );
+
+    /* A console gives each title a fixed quota; here the backing filesystem is
+     * the only limit, so report that. */
+    info->availableFreeBytes = available.QuadPart;
+    info->totalFreeBytes = free_bytes.QuadPart;
+    info->totalBytes = total.QuadPart;
+    info->usedBytes = total.QuadPart - free_bytes.QuadPart;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageMountForPackage( IXPersistentLocalStorageImpl3 *iface, const char *packageIdentifier, XPackageMountHandle *mountHandle )

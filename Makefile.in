@@ -1,4 +1,5 @@
 MODULE    = xgameruntime.dll
+UNIXLIB   = xgameruntime.so
 IMPORTS   = combase
 
 SOURCES = \
@@ -41,6 +42,8 @@ SOURCES = \
 	xsystem.c \
 	xsystem.idl \
 	xsystemanalytics.c \
+	service.c \
+	unixlib.c \
 	xthreading.c \
 	xuser.c \
 	xuser.idl
