@@ -301,9 +301,29 @@ struct async_state
     HANDLE completed;             /* manual-reset: set once status is final */
 };
 
+/*
+ * internal[] is the caller's memory, not ours.
+ *
+ * Nothing guarantees a title zeroes it, and titles reuse blocks: Beast of
+ * Reincarnation cancels stale async blocks while shutting down, and one of them
+ * held -1, so XAsyncCancel dereferenced (struct async_state *)-1 and read
+ * address 0xFFFFFFFFFFFFFFFF. Keep a signature beside the pointer and only
+ * believe the pointer when the signature is there.
+ */
+#define ASYNC_BLOCK_SIGNATURE ((void *)(ULONG_PTR)0x584f44555341ull)  /* "XODUSA" */
+
 static inline struct async_state *async_state_from_block( XAsyncBlock *async )
 {
-    return async ? async->internal[0] : NULL;
+    if (!async || async->internal[1] != ASYNC_BLOCK_SIGNATURE) return NULL;
+    return async->internal[0];
+}
+
+/* Stop believing this block: its state is about to go away. */
+static inline void async_block_invalidate( XAsyncBlock *async )
+{
+    if (!async) return;
+    async->internal[0] = NULL;
+    async->internal[1] = NULL;
 }
 
 static void async_state_release( struct async_state *state )
@@ -344,6 +364,7 @@ static HRESULT async_state_create( XAsyncBlock *async, void *context, const void
     state->status = E_PENDING;
 
     async->internal[0] = state;
+    async->internal[1] = ASYNC_BLOCK_SIGNATURE;
     *out = state;
     return S_OK;
 }
@@ -596,7 +617,7 @@ static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlo
 
     if (FAILED(hr = provider( XAsyncOp_Begin, &data )))
     {
-        asyncBlock->internal[0] = NULL;
+        async_block_invalidate( asyncBlock );
         state->provider = NULL;  /* Begin failed: no Cleanup is owed */
         async_state_release( state );
         return hr;
@@ -673,7 +694,7 @@ static HRESULT WINAPI x_threading_XAsyncGetResult( IXThreadingImpl *iface, XAsyn
      * caller has the payload. */
     if (SUCCEEDED(hr))
     {
-        asyncBlock->internal[0] = NULL;
+        async_block_invalidate( asyncBlock );
         async_state_release( state );
     }
     return hr;
