@@ -73,15 +73,38 @@ static ULONG WINAPI x_store_Release( IXStoreImpl6 *iface )
     return ref;
 }
 
+/* The store context.
+ *
+ * There is no storefront behind any of this, and nothing here tries to be one.
+ * But a title asks for a context before it asks anything else, and refusing
+ * that first call leaves it with nowhere to go: Deep Rock Galactic Survivor
+ * creates a context during start-up and, on E_NOTIMPL, sits on a black screen
+ * with its swapchain running and no further calls. Handing back a real handle
+ * lets the title get on with starting, and the queries it makes through the
+ * handle answer for themselves. */
+struct store_context
+{
+    XUserHandle user;
+};
+
 static HRESULT WINAPI x_store_XStoreCreateContext( IXStoreImpl6 *iface, const XUserHandle user, XStoreContextHandle *storeContextHandle )
 {
-    FIXME( "iface %p, user %p, storeContextHandle %p stub!\n", iface, user, storeContextHandle );
-    return E_NOTIMPL;
+    struct store_context *context;
+
+    TRACE( "iface %p, user %p, storeContextHandle %p.\n", iface, user, storeContextHandle );
+
+    if (!storeContextHandle) return E_POINTER;
+    if (!(context = calloc( 1, sizeof(*context) ))) return E_OUTOFMEMORY;
+
+    context->user = user;
+    *storeContextHandle = (XStoreContextHandle)context;
+    return S_OK;
 }
 
 static void WINAPI x_store_XStoreCloseContextHandle( IXStoreImpl6 *iface, XStoreContextHandle storeContextHandle )
 {
-    FIXME( "iface %p, storeContextHandle %p stub!\n", iface, storeContextHandle );
+    TRACE( "iface %p, storeContextHandle %p.\n", iface, storeContextHandle );
+    free( storeContextHandle );
 }
 
 static HRESULT WINAPI x_store_XStoreQueryAssociatedProductsAsync( IXStoreImpl6 *iface, const XStoreContextHandle storeContextHandle, XStoreProductKind productKinds, UINT32 maxItemsToRetrievePerPage, XAsyncBlock *async )
@@ -222,14 +245,34 @@ static HRESULT WINAPI x_store_XStoreCanAcquireLicenseForPackageResult( IXStoreIm
 
 static HRESULT WINAPI x_store_XStoreQueryGameLicenseAsync( IXStoreImpl6 *iface, const XStoreContextHandle storeContextHandle, XAsyncBlock *async )
 {
-    FIXME( "iface %p, storeContextHandle %p, async %p stub!\n", iface, storeContextHandle, async );
-    return E_NOTIMPL;
+    TRACE( "iface %p, storeContextHandle %p, async %p.\n", iface, storeContextHandle, async );
+
+    if (!storeContextHandle) return E_INVALIDARG;
+    /* Nothing to look up: the licence that got the package installed is the
+     * answer, and it is reported by the Result call below. */
+    return xasync_complete_static( async, S_OK );
 }
 
 static HRESULT WINAPI x_store_XStoreQueryGameLicenseResult( IXStoreImpl6 *iface, XAsyncBlock *async, XStoreGameLicense *license )
 {
-    FIXME( "iface %p, async %p, license %p stub!\n", iface, async, license );
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, license %p.\n", iface, async, license );
+
+    if (!license) return E_POINTER;
+    if (FAILED(hr = xasync_peek_status( async ))) return hr;
+
+    memset( license, 0, sizeof(*license) );
+    /* A full licence, not a trial: the package would not have installed
+     * without one, and reporting a trial makes titles hide content or start a
+     * countdown they can never satisfy. */
+    license->isActive = TRUE;
+    license->isTrial = FALSE;
+    license->isTrialOwnedByThisUser = FALSE;
+    license->isDiscLicense = FALSE;
+    license->trialTimeRemainingInSeconds = 0;
+    license->expirationDate = 0;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_store_XStoreQueryAddOnLicensesAsync( IXStoreImpl6 *iface, const XStoreContextHandle storeContextHandle, XAsyncBlock *async )
