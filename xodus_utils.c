@@ -61,6 +61,7 @@ HRESULT shim_start( struct shim_channel *shim, const WCHAR *envVar )
 
     TRACE( "shim %p, envVar %s.\n", shim, debugstr_w( envVar ) );
 
+    InitializeCriticalSection( &shim->lock );
     parentStdError = GetStdHandle( STD_ERROR_HANDLE );
     if (parentStdError && parentStdError != INVALID_HANDLE_VALUE)
         DuplicateHandle( GetCurrentProcess(), parentStdError, GetCurrentProcess(), &childStderr, 0, TRUE, DUPLICATE_SAME_ACCESS );
@@ -86,7 +87,6 @@ HRESULT shim_start( struct shim_channel *shim, const WCHAR *envVar )
                           NULL, NULL, &si, &pi )) goto error;
 
     CloseHandle( pi.hThread );
-    InitializeCriticalSection( &shim->lock );
     shim->process = pi.hProcess;
     shim->pid = pi.dwProcessId;
     shim->active = TRUE;
@@ -104,6 +104,7 @@ cleanup:
 
 void shim_stop( struct shim_channel *shim )
 {
+    DeleteCriticalSection( &shim->lock );
     if (!shim->active) return;
 
     TRACE( "shim %p.\n", shim );
@@ -114,7 +115,6 @@ void shim_stop( struct shim_channel *shim )
         TerminateProcess( shim->process, 1 );
     CloseHandle( shim->fromShim );
     CloseHandle( shim->process );
-    DeleteCriticalSection( &shim->lock );
     shim->active = FALSE;
 }
 
