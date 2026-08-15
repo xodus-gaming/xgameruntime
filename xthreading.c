@@ -67,7 +67,14 @@ struct task_queue
     LONG ref;
     BOOL terminated;
     CRITICAL_SECTION cs;
-    struct task_port ports[2];
+    struct task_port owned_ports[2];
+    /* Where work actually goes. Normally the ports above; for a composite
+     * queue, the donor queues' ports. Everything else works through these, so
+     * a composite genuinely shares its donors' queues rather than quietly
+     * running a second set beside them. */
+    struct task_port *ports[2];
+    /* A composite borrows its ports and must not destroy them. */
+    BOOL composite;
     struct list monitors;
     UINT64 next_token;
 };
@@ -123,20 +130,22 @@ static void task_queue_release( struct task_queue *queue )
 
     TRACE( "destroying queue %p.\n", queue );
 
-    for (i = 0; i < ARRAY_SIZE(queue->ports); i++)
+    /* A composite borrowed its ports; destroying them here would take down the
+     * queues it was built over. */
+    for (i = 0; !queue->composite && i < ARRAY_SIZE(queue->owned_ports); i++)
     {
         /* Anything still pending is reported as cancelled, which is what the
          * GDK contract promises: every submitted callback runs exactly once,
          * with canceled=TRUE if it never got a chance to do its work. */
-        LIST_FOR_EACH_ENTRY_SAFE( item, item_next, &queue->ports[i].items, struct task_item, entry )
+        LIST_FOR_EACH_ENTRY_SAFE( item, item_next, &queue->owned_ports[i].items, struct task_item, entry )
         {
             list_remove( &item->entry );
             item->callback( item->context, TRUE );
             free( item );
         }
-        CloseHandle( queue->ports[i].ready );
-        queue->ports[i].serialize_cs.DebugInfo->Spare[0] = 0;
-        DeleteCriticalSection( &queue->ports[i].serialize_cs );
+        CloseHandle( queue->owned_ports[i].ready );
+        queue->owned_ports[i].serialize_cs.DebugInfo->Spare[0] = 0;
+        DeleteCriticalSection( &queue->owned_ports[i].serialize_cs );
     }
 
     LIST_FOR_EACH_ENTRY_SAFE( monitor, monitor_next, &queue->monitors, struct task_monitor, entry )
@@ -272,7 +281,7 @@ static void CALLBACK delayed_item_cb( PTP_CALLBACK_INSTANCE instance, void *cont
     struct delayed_item *delayed = context;
     struct task_queue *queue = delayed->queue;
 
-    task_port_submit( &queue->ports[delayed->port], delayed->context, delayed->callback );
+    task_port_submit( queue->ports[delayed->port], delayed->context, delayed->callback );
 
     CloseThreadpoolTimer( delayed->timer );
     free( delayed );
@@ -440,7 +449,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
         /* The completion routine holds its own reference so the state cannot
          * be torn down between scheduling and running. */
         InterlockedIncrement( &state->ref );
-        if (FAILED(task_port_submit( &queue->ports[XTaskQueuePort_Completion], state, async_completion_cb )))
+        if (FAILED(task_port_submit( queue->ports[XTaskQueuePort_Completion], state, async_completion_cb )))
         {
             async_state_release( state );
             async->callback( async );
@@ -649,7 +658,7 @@ static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsync
         hr = IXThreadingImpl_XTaskQueueSubmitDelayedCallback( iface, handle_from_queue( queue ), XTaskQueuePort_Work,
                                                               delayInMs, state, async_dowork_cb );
     else
-        hr = task_port_submit( &queue->ports[XTaskQueuePort_Work], state, async_dowork_cb );
+        hr = task_port_submit( queue->ports[XTaskQueuePort_Work], state, async_dowork_cb );
 
     if (FAILED(hr)) async_state_release( state );
     return hr;
@@ -724,19 +733,20 @@ static HRESULT WINAPI x_threading_XTaskQueueCreate( IXThreadingImpl *iface, XTas
 
     for (i = 0; i < ARRAY_SIZE(impl->ports); i++)
     {
-        impl->ports[i].queue = impl;
-        impl->ports[i].id = i;
-        impl->ports[i].mode = modes[i];
-        list_init( &impl->ports[i].items );
-        InitializeCriticalSectionEx( &impl->ports[i].serialize_cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
-        impl->ports[i].serialize_cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": task_port.serialize_cs");
-        if (!(impl->ports[i].ready = CreateEventW( NULL, TRUE, FALSE, NULL )))
+        impl->ports[i] = &impl->owned_ports[i];
+        impl->ports[i]->queue = impl;
+        impl->ports[i]->id = i;
+        impl->ports[i]->mode = modes[i];
+        list_init( &impl->ports[i]->items );
+        InitializeCriticalSectionEx( &impl->ports[i]->serialize_cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
+        impl->ports[i]->serialize_cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": task_port.serialize_cs");
+        if (!(impl->ports[i]->ready = CreateEventW( NULL, TRUE, FALSE, NULL )))
         {
             HRESULT hr = HRESULT_FROM_WIN32( GetLastError() );
             while (i--)
             {
-                CloseHandle( impl->ports[i].ready );
-                DeleteCriticalSection( &impl->ports[i].serialize_cs );
+                CloseHandle( impl->owned_ports[i].ready );
+                DeleteCriticalSection( &impl->owned_ports[i].serialize_cs );
             }
             DeleteCriticalSection( &impl->cs );
             free( impl );
@@ -752,16 +762,34 @@ static HRESULT WINAPI x_threading_XTaskQueueCreate( IXThreadingImpl *iface, XTas
 static HRESULT WINAPI x_threading_XTaskQueueCreateComposite( IXThreadingImpl *iface, XTaskQueuePortHandle workPort, XTaskQueuePortHandle completionPort, XTaskQueueHandle *queue )
 {
     struct task_port *work = port_from_handle( workPort ), *completion = port_from_handle( completionPort );
+    struct task_queue *impl;
 
     TRACE( "iface %p, workPort %p, completionPort %p, queue %p.\n", iface, workPort, completionPort, queue );
 
     if (!work || !completion || !queue) return E_INVALIDARG;
 
-    /* A real composite queue aliases the donor queues' ports. Recreating a
-     * plain queue with the same dispatch modes preserves the observable
-     * scheduling behaviour, but not shared termination with the donors. */
-    FIXME( "composite queues are approximated by mode-matched queues.\n" );
-    return IXThreadingImpl_XTaskQueueCreate( iface, work->mode, completion->mode, queue );
+    /* Alias the donor ports rather than standing up new ones.
+     *
+     * A mode-matched copy looked equivalent but was not: callbacks submitted
+     * through the composite landed on ports nobody was pumping. Titles build a
+     * composite over the process queue while shutting down and then wait for
+     * its termination callback on the queue they are still dispatching --
+     * Expedition 33 does exactly this, and hung at exit every time because the
+     * callback went to the copy instead. */
+    if (!(impl = calloc( 1, sizeof(*impl) ))) return E_OUTOFMEMORY;
+
+    impl->ref = 1;
+    impl->next_token = 1;
+    impl->composite = TRUE;
+    impl->ports[XTaskQueuePort_Work] = work;
+    impl->ports[XTaskQueuePort_Completion] = completion;
+    list_init( &impl->monitors );
+    InitializeCriticalSectionEx( &impl->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
+    impl->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": task_queue.cs");
+
+    TRACE( "composite queue %p over work port %p and completion port %p.\n", impl, work, completion );
+    *queue = (XTaskQueueHandle)impl;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueGetPort( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, XTaskQueuePortHandle *portHandle )
@@ -773,7 +801,7 @@ static HRESULT WINAPI x_threading_XTaskQueueGetPort( IXThreadingImpl *iface, XTa
     if (!impl || !portHandle) return E_INVALIDARG;
     if (port > XTaskQueuePort_Completion) return E_INVALIDARG;
 
-    *portHandle = (XTaskQueuePortHandle)&impl->ports[port];
+    *portHandle = (XTaskQueuePortHandle)impl->ports[port];
     return S_OK;
 }
 
@@ -799,7 +827,7 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
 
     if (!impl || port > XTaskQueuePort_Completion) return FALSE;
 
-    if (!(item = task_port_pop( &impl->ports[port] )))
+    if (!(item = task_port_pop( impl->ports[port] )))
     {
         /* Nothing queued. If the queue has been terminated then nothing ever
          * will be, so waiting would be waiting forever -- and titles do pump a
@@ -808,8 +836,8 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
          * whenever it empties the list, so the event cannot stand in for this
          * check. */
         if (impl->terminated) return FALSE;
-        if (WaitForSingleObject( impl->ports[port].ready, timeoutInMs ) != WAIT_OBJECT_0) return FALSE;
-        if (!(item = task_port_pop( &impl->ports[port] ))) return FALSE;
+        if (WaitForSingleObject( impl->ports[port]->ready, timeoutInMs ) != WAIT_OBJECT_0) return FALSE;
+        if (!(item = task_port_pop( impl->ports[port] ))) return FALSE;
     }
 
     item->callback( item->context, impl->terminated );
@@ -835,7 +863,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitCallback( IXThreadingImpl *ifa
            iface, queue, port, callbackContext, callback );
 
     if (!impl || !callback || port > XTaskQueuePort_Completion) return E_INVALIDARG;
-    return task_port_submit( &impl->ports[port], callbackContext, callback );
+    return task_port_submit( impl->ports[port], callbackContext, callback );
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingImpl *iface, XTaskQueueHandle queue, XTaskQueuePort port, UINT32 delayMs, void *callbackContext, XTaskQueueCallback *callback )
@@ -849,7 +877,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
            iface, queue, port, delayMs, callbackContext, callback );
 
     if (!impl || !callback || port > XTaskQueuePort_Completion) return E_INVALIDARG;
-    if (!delayMs) return task_port_submit( &impl->ports[port], callbackContext, callback );
+    if (!delayMs) return task_port_submit( impl->ports[port], callbackContext, callback );
     if (impl->terminated) return E_ABORT;
 
     if (!(delayed = calloc( 1, sizeof(*delayed) ))) return E_OUTOFMEMORY;
@@ -916,15 +944,22 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
     impl->terminated = TRUE;
 
-    /* Drain both ports, reporting each pending callback as cancelled. */
+    /* Drain both ports, reporting each pending callback as cancelled.
+     *
+     * Not for a composite: its ports belong to the queues it was built over,
+     * and cancelling their pending work would terminate more than the caller
+     * asked for. The wake-up still happens, so anyone dispatching notices. */
     for (i = 0; i < ARRAY_SIZE(impl->ports); i++)
     {
-        while ((item = task_port_pop( &impl->ports[i] )))
+        if (!impl->composite)
         {
-            item->callback( item->context, TRUE );
-            free( item );
+            while ((item = task_port_pop( impl->ports[i] )))
+            {
+                item->callback( item->context, TRUE );
+                free( item );
+            }
         }
-        SetEvent( impl->ports[i].ready );  /* wake anyone in XTaskQueueDispatch */
+        SetEvent( impl->ports[i]->ready );  /* wake anyone in XTaskQueueDispatch */
     }
 
     if (callback)
@@ -947,7 +982,7 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
             if (!(notice = calloc( 1, sizeof(*notice) ))) return E_OUTOFMEMORY;
             notice->callback = callback;
             notice->context = callbackContext;
-            task_port_submit_ex( &impl->ports[XTaskQueuePort_Completion], notice,
+            task_port_submit_ex( impl->ports[XTaskQueuePort_Completion], notice,
                                  termination_notice_cb, TRUE );
         }
     }
@@ -1001,9 +1036,9 @@ static BOOLEAN WINAPI x_threading_XTaskQueueGetCurrentProcessTaskQueue( IXThread
 {
     BOOLEAN found;
 
-    TRACE( "iface %p, queue %p.\n", iface, queue );
-
     struct task_queue *impl;
+
+    TRACE( "iface %p, queue %p.\n", iface, queue );
 
     if (!queue) return FALSE;
 
