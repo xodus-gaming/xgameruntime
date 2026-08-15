@@ -216,12 +216,15 @@ static void CALLBACK task_port_threadpool_cb( PTP_CALLBACK_INSTANCE instance, vo
     task_queue_release( queue );  /* paired with the addref at submit time */
 }
 
-static HRESULT task_port_submit( struct task_port *port, void *context, XTaskQueueCallback *callback )
+static HRESULT task_port_submit_ex( struct task_port *port, void *context,
+                                    XTaskQueueCallback *callback, BOOL force )
 {
     struct task_queue *queue = port->queue;
     struct task_item *item;
 
-    if (queue->terminated) return E_ABORT;
+    /* force is for the termination notice, which is by definition queued after
+     * the queue has been terminated. */
+    if (queue->terminated && !force) return E_ABORT;
 
     /* Immediate never queues: it runs on the submitting thread, so there is
      * nothing to allocate and nothing for a monitor to come collect. */
@@ -257,6 +260,11 @@ static HRESULT task_port_submit( struct task_port *port, void *context, XTaskQue
     }
 
     return S_OK;
+}
+
+static HRESULT task_port_submit( struct task_port *port, void *context, XTaskQueueCallback *callback )
+{
+    return task_port_submit_ex( port, context, callback, FALSE );
 }
 
 static void CALLBACK delayed_item_cb( PTP_CALLBACK_INSTANCE instance, void *context, PTP_TIMER timer )
@@ -772,6 +780,13 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
 
     if (!(item = task_port_pop( &impl->ports[port] )))
     {
+        /* Nothing queued. If the queue has been terminated then nothing ever
+         * will be, so waiting would be waiting forever -- and titles do pump a
+         * terminated queue with an INFINITE timeout, expecting the termination
+         * notice and then a prompt FALSE. task_port_pop resets the ready event
+         * whenever it empties the list, so the event cannot stand in for this
+         * check. */
+        if (impl->terminated) return FALSE;
         if (WaitForSingleObject( impl->ports[port].ready, timeoutInMs ) != WAIT_OBJECT_0) return FALSE;
         if (!(item = task_port_pop( &impl->ports[port] ))) return FALSE;
     }
@@ -849,6 +864,24 @@ static void WINAPI x_threading_XTaskQueueUnregisterWaiter( IXThreadingImpl *ifac
     FIXME( "iface %p, queue %p, token %p stub!\n", iface, queue, &token );
 }
 
+/*
+ * A terminated callback is not an XTaskQueueCallback -- it takes no "canceled"
+ * flag -- so it rides the queue behind a trampoline.
+ */
+struct termination_notice
+{
+    XTaskQueueTerminatedCallback *callback;
+    void *context;
+};
+
+static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
+{
+    struct termination_notice *notice = context;
+
+    notice->callback( notice->context );
+    free( notice );
+}
+
 static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, XTaskQueueHandle queue, BOOLEAN wait, void *callbackContext, XTaskQueueTerminatedCallback *callback )
 {
     struct task_queue *impl = queue_from_handle( queue );
@@ -873,7 +906,30 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
         SetEvent( impl->ports[i].ready );  /* wake anyone in XTaskQueueDispatch */
     }
 
-    if (callback) callback( callbackContext );
+    if (callback)
+    {
+        if (wait)
+        {
+            /* The caller blocks until termination is complete, so there is
+             * nothing to gain by queueing -- and on a Manual port there may be
+             * nobody left to dispatch it. */
+            callback( callbackContext );
+        }
+        else
+        {
+            struct termination_notice *notice;
+
+            /* Delivered through the completion port, not inline: this is what a
+             * title is pumping for when it calls XTaskQueueDispatch after
+             * terminating. Calling it inline here leaves that dispatch with
+             * nothing to find, and it waits forever. */
+            if (!(notice = calloc( 1, sizeof(*notice) ))) return E_OUTOFMEMORY;
+            notice->callback = callback;
+            notice->context = callbackContext;
+            task_port_submit_ex( &impl->ports[XTaskQueuePort_Completion], notice,
+                                 termination_notice_cb, TRUE );
+        }
+    }
     return S_OK;
 }
 

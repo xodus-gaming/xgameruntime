@@ -70,6 +70,25 @@ HRESULT WINAPI InitializeApiImpl( ULONG gdkVer, ULONG gsVer )
     return InitializeApiImplEx2( gdkVer, gsVer, 0, NULL );
 }
 
+/*
+ * XGameRuntimeUninitialize.
+ *
+ * A spec-level stub is not a harmless placeholder here: calling one raises
+ * EXCEPTION_WINE_STUB and *aborts the process*. Beast of Reincarnation calls
+ * this while still running -- it had a window up and a swapchain presenting --
+ * and died on the spot.
+ *
+ * There is nothing this has to tear down. The process task queue and the
+ * signed-in user are process-wide and outlive any one initialize/uninitialize
+ * pair, and other threads may still be inside a call; releasing them here would
+ * trade an abort for a use-after-free.
+ */
+HRESULT WINAPI UninitializeApiImpl(void)
+{
+    TRACE( "()\n" );
+    return S_OK;
+}
+
 HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
 {
     TRACE( "clsid %s, iid %s, out %p.\n", debugstr_guid( clsid ), debugstr_guid( iid ), out );

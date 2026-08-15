@@ -447,6 +447,7 @@ static HRESULT WINAPI x_user_XUserResolvePrivilegeWithUiResult( IXUserImpl6 *ifa
 struct token_request
 {
     char *relying_party;
+    char *url;
     BOOL utf16;
     /* filled in by DoWork */
     char *token;
@@ -456,6 +457,7 @@ struct token_request
 static void token_request_free( struct token_request *req )
 {
     free( req->relying_party );
+    free( req->url );
     free( req->token );
     free( req->signature );
     free( req );
@@ -552,7 +554,7 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
 {
     static const char format[] = "<XstsTokenRequest><RelyingParty>%s</RelyingParty>"
                                  "<ForceRefresh>%s</ForceRefresh>"
-                                 "<AppId>%s</AppId></XstsTokenRequest>";
+                                 "<AppId>%s</AppId><Url>%s</Url></XstsTokenRequest>";
     const char *force = force_refresh ? "true" : "false";
     char *request, *reply = NULL, *app_id;
     HRESULT hr;
@@ -564,13 +566,13 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
     if (!(app_id = xodus_game_config_value( "MSAAppId" )))
         WARN( "no MSAAppId in MicrosoftGame.Config; the token will have no title claim.\n" );
 
-    len = _scprintf( format, req->relying_party, force, app_id ? app_id : "" );
+    len = _scprintf( format, req->relying_party, force, app_id ? app_id : "", req->url );
     if (len < 0 || !(request = malloc( len + 1 )))
     {
         free( app_id );
         return E_OUTOFMEMORY;
     }
-    sprintf( request, format, req->relying_party, force, app_id ? app_id : "" );
+    sprintf( request, format, req->relying_party, force, app_id ? app_id : "", req->url );
     free( app_id );
 
     hr = xodus_service_call( XODUS_MSG_XSTS_TOKEN, request, &reply );
@@ -634,6 +636,19 @@ static HRESULT token_begin( XUserHandle user, XUserGetTokenAndSignatureOptions o
     {
         token_request_free( req );
         return E_INVALIDARG;
+    }
+    if ((req->url = strdup( url )))
+    {
+        /* Trim the query: the endpoint table matches on host and path, and a
+         * query string would have to be XML-escaped for nothing. */
+        char *query = strchr( req->url, '?' );
+
+        if (query) *query = 0;
+    }
+    else
+    {
+        token_request_free( req );
+        return E_OUTOFMEMORY;
     }
 
     TRACE( "relying party %s.\n", debugstr_a( req->relying_party ) );
