@@ -381,7 +381,7 @@ static HRESULT load_endpoints( XUserHandle user, BYTE *buffer, SIZE_T size )
     IJsonObject *payload = NULL, *tmpObject = NULL;
     IJsonArray *jsonEndpoints = NULL, *jsonPolicies = NULL;
     IVector_IJsonValue *jsonEndpointsVector = NULL, *jsonPoliciesVector = NULL;
-    struct policy *policyCursor = NULL
+    struct policy *policyCursor = NULL;
     struct endpoint *endpointCursor = NULL;
     DOUBLE jsonNumber;
     UINT32 arraySize;
