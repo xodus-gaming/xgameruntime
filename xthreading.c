@@ -412,6 +412,7 @@ struct async_state
     HRESULT status;
     SIZE_T required_size;
     HANDLE completed;             /* manual-reset: set once status is final */
+    LONG finished;                /* set once, so the result is delivered once */
 };
 
 /*
@@ -569,6 +570,20 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
     XAsyncBlock *async = state->async;
     struct task_queue *queue;
 
+    /* An operation finishes once.
+     *
+     * A provider may call XAsyncComplete while work it scheduled earlier is
+     * still queued; that work then runs and reports its own result, and the
+     * caller's completion routine gets invoked a second time for an operation
+     * that already ended. Expedition 33's XalCleanupAsync does exactly this
+     * during shutdown. The GDK promises exactly one completion, so the first
+     * result wins and the rest are dropped. */
+    if (InterlockedExchange( &state->finished, 1 ))
+    {
+        TRACE( "async %p already finished; ignoring result %#lx.\n", async, (unsigned long)result );
+        return;
+    }
+
     if (async_is_watched( state->identity_name ))
         TRACE( "watch finish %p %s hr %#lx\n", async,
              debugstr_a( state->identity_name ), (unsigned long)result );
@@ -611,6 +626,15 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
     if (canceled)
     {
         async_finish( state, E_ABORT, 0 );
+        async_state_release( state );
+        return;
+    }
+
+    /* Nothing to do for an operation that has already ended -- running the
+     * provider again would ask it to work on something it has finished with. */
+    if (InterlockedCompareExchange( &state->finished, 0, 0 ))
+    {
+        TRACE( "async %p finished before its scheduled work ran.\n", state->async );
         async_state_release( state );
         return;
     }
@@ -842,11 +866,14 @@ static void WINAPI x_threading_XAsyncComplete( IXThreadingImpl *iface, XAsyncBlo
 
     if (!state)
     {
-        /* The caller says an operation finished and we cannot find it. There is
-         * nobody left to tell, so the completion is lost and whoever is waiting
-         * on it waits forever -- report it rather than returning in silence. */
-        ERR( "XAsyncComplete for unknown async block %p (result %#lx); "
-             "the completion cannot be delivered.\n", asyncBlock, (unsigned long)result );
+        /* Either a second completion for an operation that already ended and
+         * released its state -- which is redundant and safe to drop, and does
+         * happen: Expedition 33 completes XalCleanupAsync twice -- or a block
+         * this module never issued, where the caller is waiting for something
+         * that can no longer arrive. The two are indistinguishable once the
+         * state is gone, so say so plainly rather than claiming either. */
+        WARN( "XAsyncComplete for async block %p (result %#lx): already finished, "
+              "or never begun here.\n", asyncBlock, (unsigned long)result );
         return;
     }
     if (async_is_watched( state->identity_name ))
