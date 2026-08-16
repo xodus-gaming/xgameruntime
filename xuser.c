@@ -952,10 +952,18 @@ static HRESULT WINAPI x_user_gamertag_XUserGetGamertag( IXUserGamertagImpl *ifac
     struct user_object *user = user_from_handle( user_handle );
     SIZE_T needed;
 
-    FIXME( "iface %p, user %p, component %d: returning the placeholder gamertag.\n",
-           iface, user_handle, gamertagComponent );
-
     if (!user || !gamertag) return E_INVALIDARG;
+
+    /* Say which name is actually being handed over. This used to report a
+     * placeholder unconditionally, which was true before identities were real
+     * and has been misleading ever since: a signed-in account gets its own
+     * gamertag here, and the log claimed otherwise. */
+    if (user->xuid)
+        TRACE( "iface %p, user %p, component %d: gamertag %s.\n",
+               iface, user_handle, gamertagComponent, debugstr_a( user->gamertag ) );
+    else
+        FIXME( "iface %p, user %p, component %d: no signed-in account, returning %s.\n",
+               iface, user_handle, gamertagComponent, debugstr_a( user->gamertag ) );
 
     /* Every component (classic, modern, suffix) resolves to the same name until
      * a real account is wired up. */
