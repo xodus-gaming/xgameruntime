@@ -448,6 +448,10 @@ struct token_request
 {
     char *relying_party;
     char *url;
+    /* Signing covers the request itself, so the method and the path with its
+     * query have to survive alongside the trimmed url used for the lookup. */
+    char *method;
+    char *path_and_query;
     BOOL utf16;
     /* filled in by DoWork */
     char *token;
@@ -458,6 +462,8 @@ static void token_request_free( struct token_request *req )
 {
     free( req->relying_party );
     free( req->url );
+    free( req->method );
+    free( req->path_and_query );
     free( req->token );
     free( req->signature );
     free( req );
@@ -486,6 +492,18 @@ static char *relying_party_from_url( const char *url )
     party[len] = '/';
     party[len + 1] = 0;
     return party;
+}
+
+/* Everything from the path onwards, which is what the signature covers. */
+static char *path_and_query_from_url( const char *url )
+{
+    const char *host, *path;
+
+    if (!url) return NULL;
+    if (!(host = strstr( url, "://" ))) return strdup( url );
+    host += 3;
+    if (!(path = strchr( host, '/' ))) return strdup( "/" );
+    return strdup( path );
 }
 
 static char *utf16_to_utf8( const WCHAR *str )
@@ -554,7 +572,9 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
 {
     static const char format[] = "<XstsTokenRequest><RelyingParty>%s</RelyingParty>"
                                  "<ForceRefresh>%s</ForceRefresh>"
-                                 "<AppId>%s</AppId><Url>%s</Url></XstsTokenRequest>";
+                                 "<AppId>%s</AppId><Url>%s</Url>"
+                                 "<Method>%s</Method>"
+                                 "<PathAndQuery>%s</PathAndQuery></XstsTokenRequest>";
     const char *force = force_refresh ? "true" : "false";
     char *request, *reply = NULL, *app_id;
     HRESULT hr;
@@ -566,13 +586,17 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
     if (!(app_id = xodus_game_config_value( "MSAAppId" )))
         WARN( "no MSAAppId in MicrosoftGame.Config; the token will have no title claim.\n" );
 
-    len = _scprintf( format, req->relying_party, force, app_id ? app_id : "", req->url );
+    len = _scprintf( format, req->relying_party, force, app_id ? app_id : "", req->url,
+                     req->method ? req->method : "GET",
+                     req->path_and_query ? req->path_and_query : "/" );
     if (len < 0 || !(request = malloc( len + 1 )))
     {
         free( app_id );
         return E_OUTOFMEMORY;
     }
-    sprintf( request, format, req->relying_party, force, app_id ? app_id : "", req->url );
+    sprintf( request, format, req->relying_party, force, app_id ? app_id : "", req->url,
+             req->method ? req->method : "GET",
+             req->path_and_query ? req->path_and_query : "/" );
     free( app_id );
 
     hr = xodus_service_call( XODUS_MSG_XSTS_TOKEN, request, &reply );
@@ -623,7 +647,8 @@ static HRESULT CALLBACK token_async_provider( XAsyncOp op, const XAsyncProviderD
 }
 
 static HRESULT token_begin( XUserHandle user, XUserGetTokenAndSignatureOptions options,
-                            const char *url, BOOL utf16, XAsyncBlock *async )
+                            const char *method, const char *url, SIZE_T body_size,
+                            BOOL utf16, XAsyncBlock *async )
 {
     struct token_request *req;
     HRESULT hr;
@@ -632,6 +657,15 @@ static HRESULT token_begin( XUserHandle user, XUserGetTokenAndSignatureOptions o
     if (!(req = calloc( 1, sizeof(*req) ))) return E_OUTOFMEMORY;
 
     req->utf16 = utf16;
+    req->method = strdup( method && *method ? method : "GET" );
+    req->path_and_query = path_and_query_from_url( url );
+
+    /* The signature covers the body too. Nothing seen so far sends one -- every
+     * observed call is a GET with bodySize 0 -- so rather than carry bytes that
+     * would have to be escaped for nothing, say so if one ever turns up. */
+    if (body_size)
+        FIXME( "request body of %Iu bytes is not covered by the signature.\n", body_size );
+
     if (!(req->relying_party = relying_party_from_url( url )))
     {
         token_request_free( req );
@@ -664,7 +698,7 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureAsync( IXUserImpl6 *iface,
     TRACE( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, bodySize %Iu, async %p.\n",
            iface, user, options, debugstr_a( method ), debugstr_a( url ), headerCount, bodySize, async );
 
-    return token_begin( user, options, url, FALSE, async );
+    return token_begin( user, options, method, url, bodySize, FALSE, async );
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureResultSize( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T *bufferSize )
@@ -691,14 +725,16 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureResult( IXUserImpl6 *iface
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Async( IXUserImpl6 *iface, XUserHandle user, XUserGetTokenAndSignatureOptions options, const WCHAR *method, const WCHAR *url, SIZE_T headerCount, const XUserGetTokenAndSignatureUtf16HttpHeader *headers, SIZE_T bodySize, const void *bodyBuffer, XAsyncBlock *async )
 {
-    char *url_utf8;
+    char *url_utf8, *method_utf8;
     HRESULT hr;
 
     TRACE( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, bodySize %Iu, async %p.\n",
            iface, user, options, debugstr_w( method ), debugstr_w( url ), headerCount, bodySize, async );
 
     if (!(url_utf8 = utf16_to_utf8( url ))) return E_INVALIDARG;
-    hr = token_begin( user, options, url_utf8, TRUE, async );
+    method_utf8 = utf16_to_utf8( method );
+    hr = token_begin( user, options, method_utf8, url_utf8, bodySize, TRUE, async );
+    free( method_utf8 );
     free( url_utf8 );
     return hr;
 }
