@@ -64,6 +64,7 @@ struct task_monitor
 
 struct task_queue
 {
+    struct list entry;      /* in live_queues, so handles can be validated */
     LONG ref;
     BOOL terminated;
     CRITICAL_SECTION cs;
@@ -100,9 +101,68 @@ static CRITICAL_SECTION_DEBUG process_queue_cs_debug =
 };
 static CRITICAL_SECTION process_queue_cs = { &process_queue_cs_debug, -1, 0, 0, 0, 0 };
 
-static inline struct task_queue *queue_from_handle( XTaskQueueHandle handle )
+/* Every queue this module has handed out and not yet destroyed.
+ *
+ * A handle is an opaque pointer, and turning one back into a queue used to be a
+ * cast. That trusts the caller completely: a title passing a stale or
+ * uninitialised handle had its value dereferenced, and
+ * XTaskQueueDuplicateHandle then ran InterlockedIncrement straight through it.
+ *
+ * Titles do exactly that while shutting down -- Expedition 33 passes a handle
+ * pointing into its own .text, so the refcount increment wrote to the game's
+ * code section and took the process down with an access violation. The real
+ * runtime validates handles and answers E_INVALIDARG, so the crash only ever
+ * appeared here.
+ *
+ * Membership is checked rather than assumed. The list holds a handful of
+ * entries, so a walk costs nothing next to the work each call goes on to do. */
+static struct list live_queues = LIST_INIT( live_queues );
+static CRITICAL_SECTION live_queues_cs;
+static CRITICAL_SECTION_DEBUG live_queues_cs_debug =
 {
-    return (struct task_queue *)handle;
+    0, 0, &live_queues_cs,
+    { &live_queues_cs_debug.ProcessLocksList, &live_queues_cs_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": live_queues_cs") }
+};
+static CRITICAL_SECTION live_queues_cs = { &live_queues_cs_debug, -1, 0, 0, 0, 0 };
+
+static void register_queue( struct task_queue *queue )
+{
+    EnterCriticalSection( &live_queues_cs );
+    list_add_tail( &live_queues, &queue->entry );
+    LeaveCriticalSection( &live_queues_cs );
+}
+
+static void unregister_queue( struct task_queue *queue )
+{
+    EnterCriticalSection( &live_queues_cs );
+    list_remove( &queue->entry );
+    LeaveCriticalSection( &live_queues_cs );
+}
+
+static struct task_queue *queue_from_handle( XTaskQueueHandle handle )
+{
+    struct task_queue *queue, *found = NULL;
+
+    if (!handle) return NULL;
+
+    EnterCriticalSection( &live_queues_cs );
+    LIST_FOR_EACH_ENTRY( queue, &live_queues, struct task_queue, entry )
+    {
+        if (queue != (struct task_queue *)handle) continue;
+        found = queue;
+        break;
+    }
+    LeaveCriticalSection( &live_queues_cs );
+
+    /* Reported rather than traced: a title handing over a handle this module
+     * never issued is the difference between a call doing its job and one
+     * failing for a reason nothing else will explain, and WARN is off by
+     * default so it would go unseen exactly when it matters. */
+    if (!found)
+        ERR( "task queue handle %p was not issued by this runtime (caller %p).\n",
+             handle, __builtin_return_address(0) );
+    return found;
 }
 
 static inline XTaskQueueHandle handle_from_queue( struct task_queue *queue )
@@ -110,9 +170,31 @@ static inline XTaskQueueHandle handle_from_queue( struct task_queue *queue )
     return (XTaskQueueHandle)queue;
 }
 
-static inline struct task_port *port_from_handle( XTaskQueuePortHandle handle )
+/* Ports live inside queues, so a port handle is valid exactly when some live
+ * queue owns it. */
+static struct task_port *port_from_handle( XTaskQueuePortHandle handle )
 {
-    return (struct task_port *)handle;
+    struct task_queue *queue;
+    struct task_port *found = NULL;
+    unsigned int i;
+
+    if (!handle) return NULL;
+
+    EnterCriticalSection( &live_queues_cs );
+    LIST_FOR_EACH_ENTRY( queue, &live_queues, struct task_queue, entry )
+    {
+        for (i = 0; i < ARRAY_SIZE(queue->owned_ports); i++)
+        {
+            if (&queue->owned_ports[i] != (struct task_port *)handle) continue;
+            found = &queue->owned_ports[i];
+            break;
+        }
+        if (found) break;
+    }
+    LeaveCriticalSection( &live_queues_cs );
+
+    if (!found) ERR( "task queue port handle %p was not issued by this runtime.\n", handle );
+    return found;
 }
 
 static void task_queue_addref( struct task_queue *queue )
@@ -130,6 +212,10 @@ static void task_queue_release( struct task_queue *queue )
 
     TRACE( "destroying queue %p.\n", queue );
 
+    /* Off the list before the memory goes, so a handle to it stops validating
+     * at exactly the point it stops being usable. */
+    unregister_queue( queue );
+
     /* A composite borrowed its ports; destroying them here would take down the
      * queues it was built over. */
     for (i = 0; !queue->composite && i < ARRAY_SIZE(queue->owned_ports); i++)
@@ -146,6 +232,20 @@ static void task_queue_release( struct task_queue *queue )
         CloseHandle( queue->owned_ports[i].ready );
         queue->owned_ports[i].serialize_cs.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection( &queue->owned_ports[i].serialize_cs );
+    }
+
+    /* Give back the donor references taken when the composite was created.
+     * Taken before the monitors are torn down so the pointers are still
+     * readable, and released after this queue is off the live list. */
+    if (queue->composite)
+    {
+        struct task_queue *work = queue->ports[XTaskQueuePort_Work]->queue;
+        struct task_queue *completion = queue->ports[XTaskQueuePort_Completion]->queue;
+
+        queue->ports[XTaskQueuePort_Work] = NULL;
+        queue->ports[XTaskQueuePort_Completion] = NULL;
+        task_queue_release( work );
+        task_queue_release( completion );
     }
 
     LIST_FOR_EACH_ENTRY_SAFE( monitor, monitor_next, &queue->monitors, struct task_monitor, entry )
@@ -233,7 +333,11 @@ static HRESULT task_port_submit_ex( struct task_port *port, void *context,
 
     /* force is for the termination notice, which is by definition queued after
      * the queue has been terminated. */
-    if (queue->terminated && !force) return E_ABORT;
+    if (queue->terminated && !force)
+    {
+        ERR( "refusing work for terminated queue %p port %d.\n", queue, port->id );
+        return E_ABORT;
+    }
 
     /* Immediate never queues: it runs on the submitting thread, so there is
      * nothing to allocate and nothing for a monitor to come collect. */
@@ -419,7 +523,24 @@ static struct task_queue *process_queue_get_or_create(void)
 
 static struct task_queue *async_resolve_queue( XAsyncBlock *async )
 {
-    if (async->queue) return queue_from_handle( async->queue );
+    struct task_queue *queue;
+
+    if (!async->queue) return process_queue_get_or_create();
+    if ((queue = queue_from_handle( async->queue ))) return queue;
+
+    /* The block names a queue this runtime never issued.
+     *
+     * Dereferencing it is what used to take the process down -- Expedition 33
+     * quit with an access violation writing into its own .text. Refusing is no
+     * better, only quieter: the completion is dropped and the title waits for
+     * a callback that can never arrive, which is the shutdown that hangs at
+     * 100% of one core with every other thread idle.
+     *
+     * So deliver it on the process queue, which is where a block that names no
+     * queue goes anyway. The foreign pointer is never touched, and the caller
+     * still gets its callback. */
+    ERR( "async block %p names task queue %p, which this runtime never issued; "
+         "completing on the process queue instead.\n", async, async->queue );
     return process_queue_get_or_create();
 }
 
@@ -438,6 +559,8 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
     XAsyncBlock *async = state->async;
     struct task_queue *queue;
 
+    TRACE( "async %p finishes: %s hr %#lx\n", async,
+           debugstr_a( state->identity_name ), (unsigned long)result );
     state->status = result;
     state->required_size = required_size;
     SetEvent( state->completed );
@@ -451,6 +574,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
         InterlockedIncrement( &state->ref );
         if (FAILED(task_port_submit( queue->ports[XTaskQueuePort_Completion], state, async_completion_cb )))
         {
+            ERR( "completion port would not take async %p, calling back inline.\n", async );
             async_state_release( state );
             async->callback( async );
         }
@@ -460,7 +584,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
         /* No queue at all: the caller still expects to be told. Better to call
          * back inline than to leave them waiting on something that cannot
          * arrive. */
-        WARN( "async %p has no task queue, completing inline.\n", async );
+        ERR( "async %p has no task queue, completing inline.\n", async );
         async->callback( async );
     }
 }
@@ -480,6 +604,8 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
 
     if (state->work) hr = state->work( state->async );
     else hr = state->provider( XAsyncOp_DoWork, &data );
+    TRACE( "async %p work: %s -> %#lx\n", state->async,
+           debugstr_a( state->identity_name ), (unsigned long)hr );
 
     /* E_PENDING means the provider will call XAsyncComplete itself later. */
     if (hr != E_PENDING) async_finish( state, hr, 0 );
@@ -619,6 +745,8 @@ static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlo
     if (FAILED(hr = async_state_create( asyncBlock, context, identity, identityName, provider, &state )))
         return hr;
 
+    TRACE( "async %p begins: %s\n", asyncBlock, debugstr_a( identityName ) );
+
     data.async = asyncBlock;
     data.bufferSize = 0;
     data.buffer = NULL;
@@ -650,6 +778,8 @@ static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsync
     TRACE( "iface %p, asyncBlock %p, delayInMs %d.\n", iface, asyncBlock, delayInMs );
 
     if (!state) return E_INVALIDARG;
+    TRACE( "async %p scheduled: %s delay %u\n", asyncBlock,
+           debugstr_a( state->identity_name ), delayInMs );
     if (!(queue = async_resolve_queue( asyncBlock ))) return E_GAMERUNTIME_INVALID_HANDLE;
 
     InterlockedIncrement( &state->ref );  /* released by async_dowork_cb */
@@ -660,7 +790,22 @@ static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsync
     else
         hr = task_port_submit( queue->ports[XTaskQueuePort_Work], state, async_dowork_cb );
 
-    if (FAILED(hr)) async_state_release( state );
+    if (FAILED(hr))
+    {
+        /* The work will never run, so nothing else is going to finish this
+         * operation -- and XAsyncBegin having succeeded is a promise that the
+         * completion routine runs exactly once, however it turns out.
+         *
+         * Dropping it here is what left titles waiting forever. A queue that
+         * has been terminated refuses new work with E_ABORT, which is exactly
+         * what happens while shutting down: Expedition 33 terminates its queue,
+         * something schedules onto it, the operation vanishes, and the engine
+         * spins on its message pump waiting for a callback that can never
+         * arrive. async_finish falls back to calling back inline when the queue
+         * cannot take it, so the caller is told either way. */
+        async_finish( state, hr, 0 );
+        async_state_release( state );  /* the reference taken for async_dowork_cb */
+    }
     return hr;
 }
 
@@ -754,6 +899,8 @@ static HRESULT WINAPI x_threading_XTaskQueueCreate( IXThreadingImpl *iface, XTas
         }
     }
 
+    register_queue( impl );
+
     *queue = handle_from_queue( impl );
     TRACE( "created queue %p.\n", impl );
     return S_OK;
@@ -783,9 +930,22 @@ static HRESULT WINAPI x_threading_XTaskQueueCreateComposite( IXThreadingImpl *if
     impl->composite = TRUE;
     impl->ports[XTaskQueuePort_Work] = work;
     impl->ports[XTaskQueuePort_Completion] = completion;
+
+    /* Hold the donors open for as long as this queue exists.
+     *
+     * A composite is built from ports belonging to other queues, and the GDK
+     * keeps those queues alive on its behalf. Without that reference, closing a
+     * donor frees it while these pointers still name its ports: terminating the
+     * composite then sets an event in freed memory and queues its termination
+     * notice onto a port nobody owns any more, so the callback the caller is
+     * waiting for is never delivered. */
+    task_queue_addref( work->queue );
+    task_queue_addref( completion->queue );
     list_init( &impl->monitors );
     InitializeCriticalSectionEx( &impl->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
     impl->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": task_queue.cs");
+
+    register_queue( impl );
 
     TRACE( "composite queue %p over work port %p and completion port %p.\n", impl, work, completion );
     *queue = (XTaskQueueHandle)impl;
@@ -878,7 +1038,11 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
 
     if (!impl || !callback || port > XTaskQueuePort_Completion) return E_INVALIDARG;
     if (!delayMs) return task_port_submit( impl->ports[port], callbackContext, callback );
-    if (impl->terminated) return E_ABORT;
+    if (impl->terminated)
+    {
+        ERR( "delayed submit refused: queue %p is terminated (delay %ums).\n", impl, delayMs );
+        return E_ABORT;
+    }
 
     if (!(delayed = calloc( 1, sizeof(*delayed) ))) return E_OUTOFMEMORY;
     delayed->queue = impl;
@@ -927,6 +1091,7 @@ static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 {
     struct termination_notice *notice = context;
 
+    TRACE( "delivering termination notice %p (callback %p).\n", notice, notice->callback );
     notice->callback( notice->context );
     free( notice );
 }
@@ -942,6 +1107,8 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
     if (!impl) return E_INVALIDARG;
 
+    TRACE( "terminating queue %p (composite %d, wait %d, callback %p).\n",
+           impl, impl->composite, wait, callback );
     impl->terminated = TRUE;
 
     /* Drain both ports, reporting each pending callback as cancelled.
@@ -982,6 +1149,10 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
             if (!(notice = calloc( 1, sizeof(*notice) ))) return E_OUTOFMEMORY;
             notice->callback = callback;
             notice->context = callbackContext;
+            TRACE( "queueing termination notice for queue %p on completion port %p (mode %d, owner %p).\n",
+                 impl, impl->ports[XTaskQueuePort_Completion],
+                 impl->ports[XTaskQueuePort_Completion]->mode,
+                 impl->ports[XTaskQueuePort_Completion]->queue );
             task_port_submit_ex( impl->ports[XTaskQueuePort_Completion], notice,
                                  termination_notice_cb, TRUE );
         }
