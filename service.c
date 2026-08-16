@@ -25,7 +25,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(gdkc);
 
 /*
- * MicrosoftGame.Config ships next to the game executable and is where the
+ * MicrosoftGame.Config ships at the root of the package -- not necessarily
+ * next to the executable -- and is where the
  * store, the packaging tools and the runtime all read a title's identity from:
  * its Xbox title id and the MSA app id it authenticates as. Reading it here
  * means every title gets the right values with no per-game table.
@@ -41,14 +42,36 @@ char *xodus_game_config_value( const char *element )
     if (!GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) )) return NULL;
     if (!(sep = wcsrchr( path, '\\' ))) return NULL;
     *sep = 0;
-    if (wcslen( path ) + ARRAY_SIZE(L"\\MicrosoftGame.Config") > ARRAY_SIZE(path)) return NULL;
-    wcscat( path, L"\\MicrosoftGame.Config" );
 
-    file = CreateFileW( path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
-    if (file == INVALID_HANDLE_VALUE)
+    /* The config lives at the package root, which is often not where the
+     * executable lives: Unreal titles ship theirs several directories down, as
+     * <root>\<Project>\Binaries\WinGDK\<Project>-WinGDK-Shipping.exe. Looking
+     * only beside the executable found nothing for those, so XGameGetXboxTitleId
+     * failed and the title asked Xbox Live for achievements with titleId=0 --
+     * a query that cannot match anything. Walk up until it turns up. */
+    for (;;)
     {
-        WARN( "no MicrosoftGame.Config at %s.\n", debugstr_w( path ) );
-        return NULL;
+        WCHAR candidate[MAX_PATH];
+
+        if (wcslen( path ) + ARRAY_SIZE(L"\\MicrosoftGame.Config") > ARRAY_SIZE(candidate)) return NULL;
+        wcscpy( candidate, path );
+        wcscat( candidate, L"\\MicrosoftGame.Config" );
+
+        file = CreateFileW( candidate, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+        if (file != INVALID_HANDLE_VALUE)
+        {
+            TRACE( "using %s.\n", debugstr_w( candidate ) );
+            break;
+        }
+
+        /* Stop at the drive root, where there is no separator left to trim. */
+        if (!(sep = wcsrchr( path, '\\' )))
+        {
+            ERR( "no MicrosoftGame.Config anywhere above the executable; "
+                 "the title has no title id and Xbox Live features will not work.\n" );
+            return NULL;
+        }
+        *sep = 0;
     }
 
     size = GetFileSize( file, NULL );
