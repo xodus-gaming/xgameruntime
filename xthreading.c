@@ -554,11 +554,24 @@ static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
     async_state_release( state );
 }
 
+/* Follow one operation end to end without logging every other one.
+ *
+ * A title's shutdown waits on libHttpClient's cleanup operations, and the
+ * question is only ever whether those get driven: they are named, so match on
+ * the name and leave the rest at TRACE. */
+static BOOL async_is_watched( const char *name )
+{
+    return name && strstr( name, "leanup" );  /* Cleanup / cleanup_async */
+}
+
 static void async_finish( struct async_state *state, HRESULT result, SIZE_T required_size )
 {
     XAsyncBlock *async = state->async;
     struct task_queue *queue;
 
+    if (async_is_watched( state->identity_name ))
+        TRACE( "watch finish %p %s hr %#lx\n", async,
+             debugstr_a( state->identity_name ), (unsigned long)result );
     TRACE( "async %p finishes: %s hr %#lx\n", async,
            debugstr_a( state->identity_name ), (unsigned long)result );
     state->status = result;
@@ -604,6 +617,10 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
 
     if (state->work) hr = state->work( state->async );
     else hr = state->provider( XAsyncOp_DoWork, &data );
+    if (async_is_watched( state->identity_name ))
+        TRACE( "watch dowork %p %s -> %#lx%s\n", state->async,
+             debugstr_a( state->identity_name ), (unsigned long)hr,
+             hr == E_PENDING ? " (provider will complete it later)" : "" );
     TRACE( "async %p work: %s -> %#lx\n", state->async,
            debugstr_a( state->identity_name ), (unsigned long)hr );
 
@@ -745,6 +762,8 @@ static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlo
     if (FAILED(hr = async_state_create( asyncBlock, context, identity, identityName, provider, &state )))
         return hr;
 
+    if (async_is_watched( identityName ))
+        TRACE( "watch begin %p %s\n", asyncBlock, debugstr_a( identityName ) );
     TRACE( "async %p begins: %s\n", asyncBlock, debugstr_a( identityName ) );
 
     data.async = asyncBlock;
@@ -778,6 +797,11 @@ static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsync
     TRACE( "iface %p, asyncBlock %p, delayInMs %d.\n", iface, asyncBlock, delayInMs );
 
     if (!state) return E_INVALIDARG;
+    /* Whether the provider asks for work at all is the difference between it
+     * waiting on something of its own and us failing to run what it queued. */
+    if (async_is_watched( state->identity_name ))
+        TRACE( "watch schedule %p %s delay %u\n", asyncBlock,
+             debugstr_a( state->identity_name ), delayInMs );
     TRACE( "async %p scheduled: %s delay %u\n", asyncBlock,
            debugstr_a( state->identity_name ), delayInMs );
     if (!(queue = async_resolve_queue( asyncBlock ))) return E_GAMERUNTIME_INVALID_HANDLE;
@@ -816,7 +840,18 @@ static void WINAPI x_threading_XAsyncComplete( IXThreadingImpl *iface, XAsyncBlo
     TRACE( "iface %p, asyncBlock %p, result %#lx, requiredBufferSize %Iu.\n",
            iface, asyncBlock, result, requiredBufferSize );
 
-    if (!state) return;
+    if (!state)
+    {
+        /* The caller says an operation finished and we cannot find it. There is
+         * nobody left to tell, so the completion is lost and whoever is waiting
+         * on it waits forever -- report it rather than returning in silence. */
+        ERR( "XAsyncComplete for unknown async block %p (result %#lx); "
+             "the completion cannot be delivered.\n", asyncBlock, (unsigned long)result );
+        return;
+    }
+    if (async_is_watched( state->identity_name ))
+        TRACE( "watch complete %p %s hr %#lx\n", asyncBlock,
+             debugstr_a( state->identity_name ), (unsigned long)result );
     async_finish( state, result, requiredBufferSize );
 }
 
@@ -1099,6 +1134,7 @@ static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, XTaskQueueHandle queue, BOOLEAN wait, void *callbackContext, XTaskQueueTerminatedCallback *callback )
 {
     struct task_queue *impl = queue_from_handle( queue );
+    BOOL already_terminated = TRUE;
     struct task_item *item;
     unsigned int i;
 
@@ -1107,9 +1143,22 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
     if (!impl) return E_INVALIDARG;
 
-    TRACE( "terminating queue %p (composite %d, wait %d, callback %p).\n",
-           impl, impl->composite, wait, callback );
-    impl->terminated = TRUE;
+    TRACE( "terminating queue %p (composite %d, wait %d, callback %p, already %d).\n",
+           impl, impl->composite, wait, callback, impl->terminated );
+
+    /* Terminating a queue that is already terminated must not terminate it
+     * again. Titles do call this twice on the same queue -- observed on two
+     * queues during Expedition 33's shutdown -- and re-running the drain
+     * cancels callbacks submitted since the first call, which is work the
+     * caller had every reason to expect would run.
+     *
+     * The notice below is still delivered for each call: a caller waiting on
+     * its termination callback has to be told, whichever call it came from. */
+    if (!impl->terminated)
+    {
+        already_terminated = FALSE;
+        impl->terminated = TRUE;
+    }
 
     /* Drain both ports, reporting each pending callback as cancelled.
      *
@@ -1118,7 +1167,7 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
      * asked for. The wake-up still happens, so anyone dispatching notices. */
     for (i = 0; i < ARRAY_SIZE(impl->ports); i++)
     {
-        if (!impl->composite)
+        if (!impl->composite && !already_terminated)
         {
             while ((item = task_port_pop( impl->ports[i] )))
             {
