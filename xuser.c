@@ -494,6 +494,45 @@ static char *relying_party_from_url( const char *url )
     return party;
 }
 
+/* Escape a value for the XML the service parses.
+ *
+ * A path carries the query with it, and a query is full of '&'. Dropped in
+ * raw that starts an XML entity, and the service rejects the whole request as
+ * ill-formed -- which cost every token for a URL that had a query, while ones
+ * without a query kept working and hid it. */
+static char *xml_escape( const char *value )
+{
+    static const char *entities[] = { "&amp;", "&lt;", "&gt;", "&quot;", "&apos;" };
+    static const char specials[] = "&<>\"'";
+    const char *p;
+    char *out, *dst;
+    SIZE_T len = 1;
+
+    if (!value) return NULL;
+    for (p = value; *p; p++)
+    {
+        const char *special = strchr( specials, *p );
+        len += special && *p ? strlen( entities[special - specials] ) : 1;
+    }
+    if (!(out = malloc( len ))) return NULL;
+
+    for (p = value, dst = out; *p; p++)
+    {
+        const char *special = strchr( specials, *p );
+
+        if (special && *p)
+        {
+            const char *entity = entities[special - specials];
+
+            memcpy( dst, entity, strlen( entity ) );
+            dst += strlen( entity );
+        }
+        else *dst++ = *p;
+    }
+    *dst = 0;
+    return out;
+}
+
 /* Everything from the path onwards, which is what the signature covers. */
 static char *path_and_query_from_url( const char *url )
 {
@@ -576,7 +615,7 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
                                  "<Method>%s</Method>"
                                  "<PathAndQuery>%s</PathAndQuery></XstsTokenRequest>";
     const char *force = force_refresh ? "true" : "false";
-    char *request, *reply = NULL, *app_id;
+    char *request, *reply = NULL, *app_id, *path;
     HRESULT hr;
     int len;
 
@@ -586,18 +625,20 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
     if (!(app_id = xodus_game_config_value( "MSAAppId" )))
         WARN( "no MSAAppId in MicrosoftGame.Config; the token will have no title claim.\n" );
 
+    path = xml_escape( req->path_and_query ? req->path_and_query : "/" );
+
     len = _scprintf( format, req->relying_party, force, app_id ? app_id : "", req->url,
-                     req->method ? req->method : "GET",
-                     req->path_and_query ? req->path_and_query : "/" );
+                     req->method ? req->method : "GET", path ? path : "/" );
     if (len < 0 || !(request = malloc( len + 1 )))
     {
         free( app_id );
+        free( path );
         return E_OUTOFMEMORY;
     }
     sprintf( request, format, req->relying_party, force, app_id ? app_id : "", req->url,
-             req->method ? req->method : "GET",
-             req->path_and_query ? req->path_and_query : "/" );
+             req->method ? req->method : "GET", path ? path : "/" );
     free( app_id );
+    free( path );
 
     hr = xodus_service_call( XODUS_MSG_XSTS_TOKEN, request, &reply );
     free( request );
