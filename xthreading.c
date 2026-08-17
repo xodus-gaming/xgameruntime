@@ -131,6 +131,7 @@ static void register_queue( struct task_queue *queue )
     EnterCriticalSection( &live_queues_cs );
     list_add_tail( &live_queues, &queue->entry );
     LeaveCriticalSection( &live_queues_cs );
+    ERR( "QUEUE issued %p\n", queue );
 }
 
 static void unregister_queue( struct task_queue *queue )
@@ -138,6 +139,7 @@ static void unregister_queue( struct task_queue *queue )
     EnterCriticalSection( &live_queues_cs );
     list_remove( &queue->entry );
     LeaveCriticalSection( &live_queues_cs );
+    ERR( "QUEUE destroyed %p\n", queue );
 }
 
 /* The lookup without the complaint, for callers where a handle this module did
@@ -571,16 +573,6 @@ static struct task_queue *async_resolve_queue( XAsyncBlock *async )
     return process_queue_get_or_create();
 }
 
-/* Deliver the caller's completion routine on the queue's completion port. */
-static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
-{
-    struct async_state *state = context;
-    XAsyncBlock *async = state->async;
-
-    if (async->callback) async->callback( async );
-    async_state_release( state );
-}
-
 /* Follow one operation end to end without logging every other one.
  *
  * A title's shutdown waits on libHttpClient's cleanup operations, and the
@@ -589,6 +581,23 @@ static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
 static BOOL async_is_watched( const char *name )
 {
     return name && strstr( name, "leanup" );  /* Cleanup / cleanup_async */
+}
+
+/* Deliver the caller's completion routine on the queue's completion port. */
+static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
+{
+    struct async_state *state = context;
+    XAsyncBlock *async = state->async;
+
+    /* The last link: this is where the caller's completion routine actually
+     * runs. An operation can finish and still leave the caller waiting if this
+     * never happens, which looks identical from the outside. */
+    if (async_is_watched( state->identity_name ))
+        ERR( "WATCH callback %p %s (canceled %d, routine %p)\n", async,
+             debugstr_a( state->identity_name ), canceled, async->callback );
+
+    if (async->callback) async->callback( async );
+    async_state_release( state );
 }
 
 static void async_finish( struct async_state *state, HRESULT result, SIZE_T required_size )
@@ -606,12 +615,13 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
      * result wins and the rest are dropped. */
     if (InterlockedExchange( &state->finished, 1 ))
     {
-        TRACE( "async %p already finished; ignoring result %#lx.\n", async, (unsigned long)result );
+        ERR( "GUARD async %p (%s) already finished; ignoring result %#lx.\n", async,
+             debugstr_a( state->identity_name ), (unsigned long)result );
         return;
     }
 
     if (async_is_watched( state->identity_name ))
-        TRACE( "watch finish %p %s hr %#lx\n", async,
+        ERR( "WATCH finish %p %s hr %#lx\n", async,
              debugstr_a( state->identity_name ), (unsigned long)result );
     TRACE( "async %p finishes: %s hr %#lx\n", async,
            debugstr_a( state->identity_name ), (unsigned long)result );
@@ -625,6 +635,12 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
     {
         /* The completion routine holds its own reference so the state cannot
          * be torn down between scheduling and running. */
+        if (async_is_watched( state->identity_name ))
+            ERR( "WATCH deliver %p %s on port %p (mode %d, queue %p, terminated %d)\n",
+                 async, debugstr_a( state->identity_name ),
+                 queue->ports[XTaskQueuePort_Completion],
+                 queue->ports[XTaskQueuePort_Completion]->mode, queue, queue->terminated );
+
         InterlockedIncrement( &state->ref );
         if (FAILED(task_port_submit( queue->ports[XTaskQueuePort_Completion], state, async_completion_cb )))
         {
@@ -660,7 +676,8 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
      * provider again would ask it to work on something it has finished with. */
     if (InterlockedCompareExchange( &state->finished, 0, 0 ))
     {
-        TRACE( "async %p finished before its scheduled work ran.\n", state->async );
+        ERR( "GUARD async %p (%s) finished before its scheduled work ran.\n",
+             state->async, debugstr_a( state->identity_name ) );
         async_state_release( state );
         return;
     }
@@ -668,7 +685,7 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
     if (state->work) hr = state->work( state->async );
     else hr = state->provider( XAsyncOp_DoWork, &data );
     if (async_is_watched( state->identity_name ))
-        TRACE( "watch dowork %p %s -> %#lx%s\n", state->async,
+        ERR( "WATCH dowork %p %s -> %#lx%s\n", state->async,
              debugstr_a( state->identity_name ), (unsigned long)hr,
              hr == E_PENDING ? " (provider will complete it later)" : "" );
     TRACE( "async %p work: %s -> %#lx\n", state->async,
@@ -813,7 +830,8 @@ static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlo
         return hr;
 
     if (async_is_watched( identityName ))
-        TRACE( "watch begin %p %s\n", asyncBlock, debugstr_a( identityName ) );
+        ERR( "WATCH begin %p %s queue %p callback %p identity %p\n", asyncBlock,
+             debugstr_a( identityName ), asyncBlock->queue, asyncBlock->callback, identity );
     TRACE( "async %p begins: %s\n", asyncBlock, debugstr_a( identityName ) );
 
     data.async = asyncBlock;
@@ -850,7 +868,7 @@ static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsync
     /* Whether the provider asks for work at all is the difference between it
      * waiting on something of its own and us failing to run what it queued. */
     if (async_is_watched( state->identity_name ))
-        TRACE( "watch schedule %p %s delay %u\n", asyncBlock,
+        ERR( "WATCH schedule %p %s delay %u\n", asyncBlock,
              debugstr_a( state->identity_name ), delayInMs );
     TRACE( "async %p scheduled: %s delay %u\n", asyncBlock,
            debugstr_a( state->identity_name ), delayInMs );
@@ -903,7 +921,7 @@ static void WINAPI x_threading_XAsyncComplete( IXThreadingImpl *iface, XAsyncBlo
         return;
     }
     if (async_is_watched( state->identity_name ))
-        TRACE( "watch complete %p %s hr %#lx\n", asyncBlock,
+        ERR( "WATCH complete %p %s hr %#lx\n", asyncBlock,
              debugstr_a( state->identity_name ), (unsigned long)result );
     async_finish( state, result, requiredBufferSize );
 }
@@ -1059,6 +1077,9 @@ static HRESULT WINAPI x_threading_XTaskQueueDuplicateHandle( IXThreadingImpl *if
 
     TRACE( "iface %p, queueHandle %p, duplicatedHandle %p.\n", iface, queueHandle, duplicatedHandle );
 
+    if (!impl)
+        ERR( "QUEUE duplicate refused for %p, asked for by %p\n",
+             queueHandle, __builtin_return_address(0) );
     if (!impl || !duplicatedHandle) return E_INVALIDARG;
 
     task_queue_addref( impl );
@@ -1179,7 +1200,7 @@ static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 {
     struct termination_notice *notice = context;
 
-    TRACE( "delivering termination notice %p (callback %p).\n", notice, notice->callback );
+    ERR( "TERM notice delivered %p (callback %p, canceled %d)\n", notice, notice->callback, canceled );
     notice->callback( notice->context );
     free( notice );
 }
@@ -1196,8 +1217,9 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
     if (!impl) return E_INVALIDARG;
 
-    TRACE( "terminating queue %p (composite %d, wait %d, callback %p, already %d).\n",
-           impl, impl->composite, wait, callback, impl->terminated );
+    ERR( "TERM queue %p composite %d wait %d callback %p already %d completion_mode %d\n",
+         impl, impl->composite, wait, callback, impl->terminated,
+         impl->ports[XTaskQueuePort_Completion]->mode );
 
     /* Terminating a queue that is already terminated must not terminate it
      * again. Titles do call this twice on the same queue -- observed on two
