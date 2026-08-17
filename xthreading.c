@@ -140,7 +140,9 @@ static void unregister_queue( struct task_queue *queue )
     LeaveCriticalSection( &live_queues_cs );
 }
 
-static struct task_queue *queue_from_handle( XTaskQueueHandle handle )
+/* The lookup without the complaint, for callers where a handle this module did
+ * not issue is an ordinary thing to meet rather than a fault worth reporting. */
+static struct task_queue *queue_lookup( XTaskQueueHandle handle )
 {
     struct task_queue *queue, *found = NULL;
 
@@ -154,12 +156,18 @@ static struct task_queue *queue_from_handle( XTaskQueueHandle handle )
         break;
     }
     LeaveCriticalSection( &live_queues_cs );
+    return found;
+}
+
+static struct task_queue *queue_from_handle( XTaskQueueHandle handle )
+{
+    struct task_queue *found = queue_lookup( handle );
 
     /* Reported rather than traced: a title handing over a handle this module
      * never issued is the difference between a call doing its job and one
      * failing for a reason nothing else will explain, and WARN is off by
      * default so it would go unseen exactly when it matters. */
-    if (!found)
+    if (!found && handle)
         ERR( "task queue handle %p was not issued by this runtime (caller %p).\n",
              handle, __builtin_return_address(0) );
     return found;
@@ -413,6 +421,7 @@ struct async_state
     SIZE_T required_size;
     HANDLE completed;             /* manual-reset: set once status is final */
     LONG finished;                /* set once, so the result is delivered once */
+    struct task_queue *queue;     /* held for the operation's lifetime */
 };
 
 /*
@@ -449,6 +458,8 @@ static void async_state_release( struct async_state *state )
         XAsyncProviderData data = { state->async, 0, NULL, state->context };
         state->provider( XAsyncOp_Cleanup, &data );
     }
+    /* After the provider's cleanup, which may still submit to the queue. */
+    if (state->queue) task_queue_release( state->queue );
     CloseHandle( state->completed );
     free( state );
 }
@@ -476,6 +487,21 @@ static HRESULT async_state_create( XAsyncBlock *async, void *context, const void
     state->identity_name = identity_name;
     state->provider = provider;
     state->status = E_PENDING;
+
+    /* An operation in flight keeps its queue alive.
+     *
+     * XAsyncBegin is given the queue its completion will be delivered on, and
+     * nothing else holds that queue on the operation's behalf. A title closing
+     * its queue while work is still outstanding would destroy it underneath
+     * that work, leaving the completion with nowhere left to run. The GDK holds
+     * the queue for the lifetime of the operation; a reference here costs
+     * nothing and removes the window entirely.
+     *
+     * A queue this module did not issue is left alone rather than refused: a
+     * null one is normal and falls back to the process queue, and a foreign
+     * handle is not ours to reference-count -- Expedition 33 hands over a
+     * pointer into its own image, which is why handles are validated at all. */
+    if ((state->queue = queue_lookup( async->queue ))) task_queue_addref( state->queue );
 
     async->internal[0] = state;
     async->internal[1] = ASYNC_BLOCK_SIGNATURE;
