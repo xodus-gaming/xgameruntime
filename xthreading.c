@@ -1208,7 +1208,8 @@ static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 {
     struct termination_notice *notice = context;
 
-    ERR( "TERM notice delivered %p (callback %p, canceled %d)\n", notice, notice->callback, canceled );
+    ERR( "TERM notice delivered %p (callback %p, context %p, canceled %d)\n",
+         notice, notice->callback, notice->context, canceled );
     notice->callback( notice->context );
     free( notice );
 }
@@ -1225,8 +1226,8 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
     if (!impl) return E_INVALIDARG;
 
-    ERR( "TERM queue %p composite %d wait %d callback %p already %d completion_mode %d\n",
-         impl, impl->composite, wait, callback, impl->terminated,
+    ERR( "TERM queue %p composite %d wait %d context %p callback %p already %d completion_mode %d\n",
+         impl, impl->composite, wait, callbackContext, callback, impl->terminated,
          impl->ports[XTaskQueuePort_Completion]->mode );
 
     /* Terminating a queue that is already terminated must not terminate it
