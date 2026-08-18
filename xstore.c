@@ -373,19 +373,22 @@ static HRESULT WINAPI x_store_XStoreQueryLicenseTokenResult( IXStoreImpl6 *iface
 
 static HRESULT WINAPI __PADDING__( IXStoreImpl6 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_2__( IXStoreImpl6 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_3__( IXStoreImpl6 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 

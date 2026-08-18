@@ -173,13 +173,15 @@ static HRESULT WINAPI x_package_XPackageUninstallChunks( IXPackageImpl4 *iface, 
 
 static HRESULT WINAPI __PADDING__( IXPackageImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_2__( IXPackageImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
@@ -191,7 +193,8 @@ static BOOLEAN WINAPI x_package_XPackageUnregisterPackageInstalled( IXPackageImp
 
 static HRESULT WINAPI __PADDING_3__( IXPackageImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
@@ -214,7 +217,8 @@ static void WINAPI x_package_XPackageCloseMountHandle( IXPackageImpl4 *iface, XP
 
 static HRESULT WINAPI __PADDING_4__( IXPackageImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
@@ -238,7 +242,8 @@ static HRESULT WINAPI x_package_XPackageGetWriteStats( IXPackageImpl4 *iface, XP
 
 static HRESULT WINAPI __PADDING_5__( IXPackageImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 

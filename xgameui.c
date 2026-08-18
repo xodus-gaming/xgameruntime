@@ -175,25 +175,29 @@ static HRESULT WINAPI x_game_ui_XGameUiShowTextEntryResult( IXGameUiImpl4 *iface
 
 static HRESULT WINAPI __PADDING__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_2__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_3__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_4__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
@@ -223,13 +227,15 @@ static HRESULT WINAPI x_game_ui_XGameUiShowWebAuthenticationWithOptionsAsync( IX
 
 static HRESULT WINAPI __PADDING_5__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_6__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
@@ -247,13 +253,15 @@ static HRESULT WINAPI x_game_ui_XGameUiShowMultiplayerActivityGameInviteResult( 
 
 static HRESULT WINAPI __PADDING_7__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI __PADDING_8__( IXGameUiImpl4 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 

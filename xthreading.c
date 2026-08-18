@@ -318,6 +318,7 @@ static void task_port_run_one( struct task_port *port )
 
     if ((item = task_port_pop( port )))
     {
+        ERR( "PORTQ run item %p (drain, canceled %d)\n", item, port->queue->terminated );
         item->callback( item->context, port->queue->terminated );
         free( item );
     }
@@ -361,6 +362,11 @@ static HRESULT task_port_submit_ex( struct task_port *port, void *context,
     item->context = context;
     item->callback = callback;
 
+    /* Logged before the item is published: once it is on the list and the
+     * event is set, a threadpool thread may already have run and freed it,
+     * and the port with it if that was the last reference. */
+    ERR( "PORTQ submit item %p queue %p port %d mode %d cb %p\n",
+         item, queue, port->id, port->mode, callback );
     EnterCriticalSection( &queue->cs );
     list_add_tail( &port->items, &item->entry );
     SetEvent( port->ready );
@@ -852,7 +858,8 @@ static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlo
 
 static HRESULT WINAPI __PADDING__( IXThreadingImpl *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
@@ -1109,6 +1116,7 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
         if (!(item = task_port_pop( impl->ports[port] ))) return FALSE;
     }
 
+    ERR( "PORTQ run item %p (dispatch, canceled %d)\n", item, impl->terminated );
     item->callback( item->context, impl->terminated );
     free( item );
     return TRUE;

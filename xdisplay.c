@@ -71,7 +71,8 @@ static ULONG WINAPI x_display_Release( IXDisplayImpl *iface )
 
 static HRESULT WINAPI __PADDING__( IXDisplayImpl *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 

@@ -370,7 +370,8 @@ static HRESULT WINAPI x_user_XUserGetState( IXUserImpl6 *iface, XUserHandle user
 
 static HRESULT WINAPI __PADDING__( IXUserImpl6 *iface )
 {
-    WARN( "iface %p padding function called! It's unknown what this function does.\n", iface );
+    ERR( "PADDING slot called on iface %p by %p -- this GDK function is missing "
+         "and its out-parameters are left untouched.\n", iface, __builtin_return_address(0) );
     return E_NOTIMPL;
 }
 
