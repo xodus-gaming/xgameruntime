@@ -482,6 +482,7 @@ static void async_provider_cleanup( struct async_state *state )
  * the provider would wait forever for a cleanup that is owed to it. */
 static BOOL async_owes_cleanup( const struct async_state *state )
 {
+    if (getenv( "XODUS_NO_EARLY_CLEANUP" )) return FALSE;   /* A/B experiment */
     return !state->required_size || FAILED(state->status);
 }
 
@@ -1261,6 +1262,7 @@ static LONG WINAPI report_callback_fault( EXCEPTION_POINTERS *info, void *ctx )
 {
     struct termination_notice *notice = ctx;
     EXCEPTION_RECORD *rec = info->ExceptionRecord;
+    const ULONG_PTR *top;
     ULONG_PTR *sp;
     unsigned int i, shown = 0;
 
@@ -1275,9 +1277,16 @@ static LONG WINAPI report_callback_fault( EXCEPTION_POINTERS *info, void *ctx )
 
     /* A raw scan rather than an unwind: the title ships no unwind information
      * this side can read, so the call chain is recovered by printing the stack
-     * slots that fall inside its image and resolving them afterwards. */
+     * slots that fall inside its image and resolving them afterwards.
+     *
+     * Bounded by the thread's own stack. Reading past the top reaches the guard
+     * page, and a fault there -- raised while already handling a fault -- is
+     * not recoverable: it took down Deep Rock Galactic Survivor, whose own
+     * handler had been absorbing the original fault quietly for as long as the
+     * title has run. Diagnostics do not get to be the reason something dies. */
     sp = (ULONG_PTR *)info->ContextRecord->Rsp;
-    for (i = 0; i < 256 && shown < 24; i++)
+    top = (const ULONG_PTR *)((const NT_TIB *)NtCurrentTeb())->StackBase;
+    for (i = 0; i < 256 && &sp[i] < top && shown < 24; i++)
     {
         ULONG_PTR v = sp[i];
         if (v > 0x140000000 && v < 0x150000000)
@@ -1295,14 +1304,23 @@ static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 
     ERR( "TERM notice delivered %p (callback %p, context %p, canceled %d)\n",
          notice, notice->callback, notice->context, canceled );
-    __TRY
+    /* Off unless asked for. Wrapping a title's callback puts a handler frame
+     * between it and whatever was catching its faults before, and Deep Rock
+     * Galactic Survivor faults in this callback routinely and quietly -- with
+     * the frame in place that fault surfaces as an error dialog on the way
+     * out. Diagnostics do not get to change what a title does. */
+    if (getenv( "XODUS_CATCH_CALLBACK_FAULTS" ))
     {
-        notice->callback( notice->context );
+        __TRY
+        {
+            notice->callback( notice->context );
+        }
+        __EXCEPT_CTX( report_callback_fault, notice )
+        {
+        }
+        __ENDTRY
     }
-    __EXCEPT_CTX( report_callback_fault, notice )
-    {
-    }
-    __ENDTRY
+    else notice->callback( notice->context );
     free( notice );
 }
 
@@ -1385,11 +1403,6 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
              * null pointer, which is the crash behind the title's error dialog.
              * The ports are already drained above, so termination really is
              * complete and the notice is honest here. */
-            if (impl->ports[XTaskQueuePort_Completion]->mode != XTaskQueueDispatchMode_Manual)
-            {
-                callback( callbackContext );
-                return S_OK;
-            }
             if (!(notice = calloc( 1, sizeof(*notice) ))) return E_OUTOFMEMORY;
             notice->callback = callback;
             notice->context = callbackContext;
