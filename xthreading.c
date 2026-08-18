@@ -587,7 +587,12 @@ static struct task_queue *async_resolve_queue( XAsyncBlock *async )
  * the name and leave the rest at TRACE. */
 static BOOL async_is_watched( const char *name )
 {
-    return name && strstr( name, "leanup" );  /* Cleanup / cleanup_async */
+    if (!name) return FALSE;
+    /* Cleanup / cleanup_async, and the HTTP call libHttpClient still believes
+     * is running when it starts tearing down -- it cancels that block long
+     * after the block completed, which only makes sense if its own record of
+     * active requests never lost the entry. */
+    return strstr( name, "leanup" ) || strstr( name, "HttpCallPerformAsync" );
 }
 
 /* Deliver the caller's completion routine on the queue's completion port. */
@@ -636,7 +641,13 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
     state->required_size = required_size;
     SetEvent( state->completed );
 
-    if (!async->callback) return;
+    if (!async->callback)
+    {
+        if (async_is_watched( state->identity_name ))
+            ERR( "WATCH finish %p %s has no completion routine; nothing delivered\n",
+                 async, debugstr_a( state->identity_name ) );
+        return;
+    }
 
     if ((queue = async_resolve_queue( async )))
     {
