@@ -22,6 +22,7 @@
 #include "private.h"
 
 #include <wine/list.h>
+#include <wine/exception.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdkc);
 
@@ -1204,13 +1205,64 @@ struct termination_notice
     void *context;
 };
 
+/* Report an access violation raised inside a title's own callback.
+ *
+ * Expedition 33 faults on the way out, releasing an object whose pointer lands
+ * in its own .text. That fault is what the crash dialog shows, and when
+ * something upstream swallows it, it is the best candidate for the shutdown
+ * that never finishes. The process dies before anything can look at it and the
+ * handler that would print a backtrace crashes itself, so the exception is
+ * caught here instead, where the record names the faulting address and the
+ * context carries rip and rsp.
+ *
+ * The filter reports and declines to handle: a title faulting here is broken
+ * either way, and swallowing it would turn a crash into a hang. */
+static LONG WINAPI report_callback_fault( EXCEPTION_POINTERS *info, void *ctx )
+{
+    struct termination_notice *notice = ctx;
+    EXCEPTION_RECORD *rec = info->ExceptionRecord;
+    ULONG_PTR *sp;
+    unsigned int i, shown = 0;
+
+    if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+
+    ERR( "FAULT in termination callback: %s at %p (callback %p, context %p)\n",
+         rec->ExceptionInformation[0] ? "write" : "read",
+         (void *)rec->ExceptionInformation[1], notice->callback, notice->context );
+    ERR( "FAULT rip %p rsp %p rcx %p rdx %p\n", (void *)info->ContextRecord->Rip,
+         (void *)info->ContextRecord->Rsp, (void *)info->ContextRecord->Rcx,
+         (void *)info->ContextRecord->Rdx );
+
+    /* A raw scan rather than an unwind: the title ships no unwind information
+     * this side can read, so the call chain is recovered by printing the stack
+     * slots that fall inside its image and resolving them afterwards. */
+    sp = (ULONG_PTR *)info->ContextRecord->Rsp;
+    for (i = 0; i < 256 && shown < 24; i++)
+    {
+        ULONG_PTR v = sp[i];
+        if (v > 0x140000000 && v < 0x150000000)
+        {
+            ERR( "FAULT stack[%u] %p\n", i, (void *)v );
+            shown++;
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 {
     struct termination_notice *notice = context;
 
     ERR( "TERM notice delivered %p (callback %p, context %p, canceled %d)\n",
          notice, notice->callback, notice->context, canceled );
-    notice->callback( notice->context );
+    __TRY
+    {
+        notice->callback( notice->context );
+    }
+    __EXCEPT_CTX( report_callback_fault, notice )
+    {
+    }
+    __ENDTRY
     free( notice );
 }
 
@@ -1279,6 +1331,25 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
              * title is pumping for when it calls XTaskQueueDispatch after
              * terminating. Calling it inline here leaves that dispatch with
              * nothing to find, and it waits forever. */
+            /* Who is going to run this decides where it goes.
+             *
+             * A Manual port only runs what someone dispatches, and a title
+             * that terminates then pumps XTaskQueueDispatch is waiting for
+             * exactly this notice -- delivering it inline leaves that dispatch
+             * with nothing to find and it waits forever.
+             *
+             * Nothing dispatches a threadpool port, though, so queueing there
+             * only delays the notice until a threadpool thread picks it up.
+             * That delay is not free: Expedition 33's callback reads through
+             * state its shutdown has already torn down by then and faults on a
+             * null pointer, which is the crash behind the title's error dialog.
+             * The ports are already drained above, so termination really is
+             * complete and the notice is honest here. */
+            if (impl->ports[XTaskQueuePort_Completion]->mode != XTaskQueueDispatchMode_Manual)
+            {
+                callback( callbackContext );
+                return S_OK;
+            }
             if (!(notice = calloc( 1, sizeof(*notice) ))) return E_OUTOFMEMORY;
             notice->callback = callback;
             notice->context = callbackContext;
