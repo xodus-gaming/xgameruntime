@@ -69,28 +69,52 @@ static ULONG WINAPI x_game_invite_Release( IXGameInviteImpl2 *iface )
     return ref;
 }
 
+/* Registrations are accepted and counted, never raised. */
+static LONG64 game_invite_event_token;
+
 static HRESULT WINAPI x_game_invite_XGameInviteRegisterForEvent( IXGameInviteImpl2 *iface, XTaskQueueHandle queue, void *context, XGameInviteEventCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, context %p, callback %p, token %p stub!\n", iface, queue, context, callback, token );
-    return E_NOTIMPL;
+    FIXME( "iface %p, queue %p, context %p, callback %p, token %p: accepted, no invite will be raised.\n",
+           iface, queue, context, callback, token );
+
+    if (!callback || !token) return E_INVALIDARG;
+
+    /* Refusing left the caller's token untouched, and a title reads it back
+     * regardless: Expedition 33 carries that uninitialised value to shutdown
+     * and unregisters with it. Handing back a real token costs nothing -- no
+     * invite is raised either way -- and matches what the neighbouring
+     * registrations already do. */
+    token->token = InterlockedIncrement64( &game_invite_event_token );
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_game_invite_XGameInviteUnregisterForEvent( IXGameInviteImpl2 *iface, XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
-    FIXME( "iface %p, token %p, wait %d stub!\n", iface, &token, wait );
+    /* The token is passed by value; printing its address showed a stack
+     * slot and read like a corrupt handle every time it appeared in a log. */
+    TRACE( "iface %p, token %I64d, wait %d.\n", iface, token.token, wait );
     return TRUE;
 }
 
 static HRESULT WINAPI x_game_invite_XGameInviteRegisterForPendingEvent( IXGameInviteImpl2 *iface, XTaskQueueHandle queue, void *context, XGameInviteEventCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, context %p, callback %p, token %p stub!\n", iface, queue, context, callback, token );
-    return E_NOTIMPL;
+    FIXME( "iface %p, queue %p, context %p, callback %p, token %p: accepted, no invite will be raised.\n",
+           iface, queue, context, callback, token );
+
+    if (!callback || !token) return E_INVALIDARG;
+
+    token->token = InterlockedIncrement64( &game_invite_event_token );
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_game_invite_XGameInviteUnregisterForPendingEvent( IXGameInviteImpl2 *iface, XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
-    FIXME( "iface %p, token %p, wait %d stub!\n", iface, &token, wait );
-    return FALSE;
+    TRACE( "iface %p, token %I64d, wait %d.\n", iface, token.token, wait );
+
+    /* Nothing was ever queued against the registration, so there is nothing to
+     * wait for and removal always succeeds. Answering FALSE claimed the token
+     * was unknown, for a registration this module had just handed out. */
+    return TRUE;
 }
 
 static HRESULT WINAPI x_game_invite_XGameInviteAcceptPendingInvite( IXGameInviteImpl2 *iface, const char *inviteUri )
