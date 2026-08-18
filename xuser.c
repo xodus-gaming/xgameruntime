@@ -1122,16 +1122,32 @@ static HRESULT WINAPI x_user_device_XUserGetDefaultAudioEndpointUtf16( IXUserDev
     return E_NOTIMPL;
 }
 
+/* Registrations are accepted and counted, never raised. */
+static LONG64 audio_endpoint_event_token;
+
 static HRESULT WINAPI x_user_device_XUserRegisterForDefaultAudioEndpointUtf16Changed( IXUserDeviceImpl2 *iface, XTaskQueueHandle queue, void *context, XUserDefaultAudioEndpointUtf16ChangedCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, queue %p, context %p, callback %p, token %p stub!\n", iface, queue, context, callback, token );
-    return E_NOTIMPL;
+    FIXME( "iface %p, queue %p, context %p, callback %p, token %p: accepted, the default endpoint never changes.\n",
+           iface, queue, context, callback, token );
+
+    if (!callback || !token) return E_INVALIDARG;
+
+    /* Refusing made Expedition 33 retry without end: it builds a task queue,
+     * asks for the connectivity hint, registers for this, is turned down,
+     * terminates the queue and starts over -- which is the loop the title
+     * spins in instead of exiting. Accepting costs nothing, since no endpoint
+     * change is ever raised, and matches XUserRegisterForChangeEvent above. */
+    token->token = InterlockedIncrement64( &audio_endpoint_event_token );
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_user_device_XUserUnregisterForDefaultAudioEndpointUtf16Changed( IXUserDeviceImpl2 *iface, XTaskQueueRegistrationToken token, BOOLEAN wait )
 {
-    FIXME( "iface %p, token %p, wait %d stub!\n", iface, &token, wait );
-    return FALSE;
+    TRACE( "iface %p, token %I64d, wait %d.\n", iface, token.token, wait );
+
+    /* Nothing was ever queued against the registration, so there is nothing to
+     * wait for and removal always succeeds. */
+    return TRUE;
 }
 
 static HRESULT WINAPI x_user_device_XUserFindControllerForUserWithUiAsync( IXUserDeviceImpl2 *iface, XUserHandle user, XAsyncBlock *async )
