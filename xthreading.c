@@ -430,6 +430,7 @@ struct async_state
     SIZE_T required_size;
     HANDLE completed;             /* manual-reset: set once status is final */
     LONG finished;                /* set once, so the result is delivered once */
+    LONG cleaned_up;              /* set once, so the provider is cleaned up once */
     struct task_queue *queue;     /* held for the operation's lifetime */
 };
 
@@ -458,15 +459,37 @@ static inline void async_block_invalidate( XAsyncBlock *async )
     async->internal[1] = NULL;
 }
 
+/* Tell the provider to let go of the operation, once and once only.
+ *
+ * Reached either when the state is torn down or, for an operation with no
+ * result to collect, as soon as its completion routine has run. */
+static void async_provider_cleanup( struct async_state *state )
+{
+    XAsyncProviderData data;
+
+    if (!state->provider) return;
+    if (InterlockedExchange( &state->cleaned_up, 1 )) return;
+
+    data.async = state->async;
+    data.bufferSize = 0;
+    data.buffer = NULL;
+    data.context = state->context;
+    state->provider( XAsyncOp_Cleanup, &data );
+}
+
+/* An operation that produced no payload, or failed, has nothing for the caller
+ * to come back for -- so no XAsyncGetResult will ever arrive to release it, and
+ * the provider would wait forever for a cleanup that is owed to it. */
+static BOOL async_owes_cleanup( const struct async_state *state )
+{
+    return !state->required_size || FAILED(state->status);
+}
+
 static void async_state_release( struct async_state *state )
 {
     if (InterlockedDecrement( &state->ref )) return;
 
-    if (state->provider)
-    {
-        XAsyncProviderData data = { state->async, 0, NULL, state->context };
-        state->provider( XAsyncOp_Cleanup, &data );
-    }
+    async_provider_cleanup( state );
     /* After the provider's cleanup, which may still submit to the queue. */
     if (state->queue) task_queue_release( state->queue );
     CloseHandle( state->completed );
@@ -609,6 +632,7 @@ static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
              debugstr_a( state->identity_name ), canceled, async->callback );
 
     if (async->callback) async->callback( async );
+    if (async_owes_cleanup( state )) async_provider_cleanup( state );
     async_state_release( state );
 }
 
@@ -646,6 +670,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
         if (async_is_watched( state->identity_name ))
             ERR( "WATCH finish %p %s has no completion routine; nothing delivered\n",
                  async, debugstr_a( state->identity_name ) );
+        if (async_owes_cleanup( state )) async_provider_cleanup( state );
         return;
     }
 
@@ -665,6 +690,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
             ERR( "completion port would not take async %p, calling back inline.\n", async );
             async_state_release( state );
             async->callback( async );
+            if (async_owes_cleanup( state )) async_provider_cleanup( state );
         }
     }
     else
@@ -674,6 +700,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
          * arrive. */
         ERR( "async %p has no task queue, completing inline.\n", async );
         async->callback( async );
+        if (async_owes_cleanup( state )) async_provider_cleanup( state );
     }
 }
 
@@ -962,6 +989,8 @@ static HRESULT WINAPI x_threading_XAsyncGetResult( IXThreadingImpl *iface, XAsyn
     if (bufferUsed) *bufferUsed = state->required_size;
     if (!state->provider) return state->status;
     if (bufferSize < state->required_size) return E_NOT_SUFFICIENT_BUFFER;
+
+    if (state->cleaned_up) return state->status;
 
     data.async = asyncBlock;
     data.bufferSize = bufferSize;
