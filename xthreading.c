@@ -619,6 +619,17 @@ static BOOL async_is_watched( const char *name )
     return strstr( name, "leanup" ) || strstr( name, "HttpCallPerformAsync" );
 }
 
+/* Whether an address is somewhere a call can legitimately go. */
+static BOOL callback_is_code( const void *addr )
+{
+    MEMORY_BASIC_INFORMATION mbi;
+
+    if (!VirtualQuery( addr, &mbi, sizeof(mbi) )) return FALSE;
+    if (mbi.State != MEM_COMMIT) return FALSE;
+    return !!(mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ |
+                             PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+}
+
 /* Deliver the caller's completion routine on the queue's completion port. */
 static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
 {
@@ -632,7 +643,20 @@ static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
         ERR( "WATCH callback %p %s (canceled %d, routine %p)\n", async,
              debugstr_a( state->identity_name ), canceled, async->callback );
 
-    if (async->callback) async->callback( async );
+    /* A completion routine has to be code before it is called.
+     *
+     * The routine is read out of the caller's own XAsyncBlock, and a block that
+     * has been abandoned or reused hands back whatever now occupies that field:
+     * Deep Rock Galactic reaches this with one pointing into a private
+     * read-write page, and calling it faults on execute with nothing in the log
+     * to say why. Refusing to jump there turns an unexplained death into a line
+     * naming the operation. */
+    if (async->callback && callback_is_code( async->callback ))
+        async->callback( async );
+    else if (async->callback)
+        ERR( "completion routine %p for %s is not executable; not calling it.\n",
+             async->callback, debugstr_a( state->identity_name ) );
+
     if (async_owes_cleanup( state )) async_provider_cleanup( state );
     async_state_release( state );
 }
