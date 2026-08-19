@@ -25,6 +25,83 @@ WINE_DEFAULT_DEBUG_CHANNEL(xgameruntime);
 
 DWORD tlsIndex;
 
+/* Report exceptions before the title gets to decide what they mean.
+ *
+ * A title's own handler catches a fault and turns it into whatever message it
+ * feels like -- Deep Rock Galactic reduces one to "Fatal error!" with no
+ * detail, and writes no log, which leaves nothing to work from. A vectored
+ * handler runs ahead of every frame-based one, so the original exception is
+ * still intact here: its code, where it came from, and for an access violation
+ * the address that could not be touched.
+ *
+ * Off unless XODUS_TRACE_EXCEPTIONS is set. This reports and declines to
+ * handle, so nothing about the title's own behaviour changes -- but a handler
+ * on the exception path is not free, and it must not be in the way when nobody
+ * is reading it.
+ */
+static LONG CALLBACK trace_exception( EXCEPTION_POINTERS *info )
+{
+    const EXCEPTION_RECORD *rec = info->ExceptionRecord;
+
+    switch (rec->ExceptionCode)
+    {
+    /* Ordinary traffic, not faults: C++ throws, a thread naming itself, and
+     * the breakpoints a debugger-aware title plants in its own code. */
+    case 0xe06d7363:
+    case 0x406d1388:
+    case EXCEPTION_BREAKPOINT:
+    case EXCEPTION_SINGLE_STEP:
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2)
+    {
+        void *addr = (void *)rec->ExceptionInformation[1];
+        MEMORY_BASIC_INFORMATION mbi = { 0 };
+        const char *how;
+
+        /* 0 read, 1 write, 8 execute -- and the last is the one worth naming,
+         * because it means the code jumped somewhere it was not allowed to run
+         * rather than touched something it should not have. */
+        switch (rec->ExceptionInformation[0])
+        {
+        case 0:  how = "read of"; break;
+        case 1:  how = "write to"; break;
+        case 8:  how = "execute at"; break;
+        default: how = "access to"; break;
+        }
+
+        /* Faulting on the first byte of a thunk means the call that jumped
+         * here has just pushed its return address, so who did it is sitting at
+         * the top of the stack. */
+        if (rec->ExceptionInformation[0] == 8 && (void *)info->ContextRecord->Rip == addr)
+        {
+            const void **sp = (const void **)info->ContextRecord->Rsp;
+            MEMORY_BASIC_INFORMATION caller = { 0 };
+
+            if (VirtualQuery( sp, &caller, sizeof(caller) ) && caller.State == MEM_COMMIT)
+            {
+                VirtualQuery( *sp, &caller, sizeof(caller) );
+                ERR( "EXC jumped here from %p (in a region based at %p, type %#lx)\n",
+                     *sp, caller.AllocationBase, caller.Type );
+            }
+        }
+
+        if (VirtualQuery( addr, &mbi, sizeof(mbi) ))
+            ERR( "EXC %#lx at %p: %s %p -- page state %#lx protect %#lx type %#lx (rip %p)\n",
+                 rec->ExceptionCode, rec->ExceptionAddress, how, addr,
+                 mbi.State, mbi.Protect, mbi.Type, (void *)info->ContextRecord->Rip );
+        else
+            ERR( "EXC %#lx at %p: %s %p -- not mapped (rip %p)\n", rec->ExceptionCode,
+                 rec->ExceptionAddress, how, addr, (void *)info->ContextRecord->Rip );
+    }
+    else
+        ERR( "EXC %#lx at %p (rip %p, rsp %p)\n", rec->ExceptionCode, rec->ExceptionAddress,
+             (void *)info->ContextRecord->Rip, (void *)info->ContextRecord->Rsp );
+
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 {
     TRACE( "hinst %p, reason %lu, reserved %p.\n", hinst, reason, reserved );
@@ -37,6 +114,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
              * here must not take the whole DLL down: everything except the
              * account calls works without it. */
             if (__wine_init_unix_call()) WARN( "no unix library; xodus-service is unreachable.\n" );
+            if (getenv( "XODUS_TRACE_EXCEPTIONS" )) AddVectoredExceptionHandler( TRUE, trace_exception );
         case DLL_THREAD_ATTACH:
             TlsSetValue( tlsIndex, FALSE );
             break;
