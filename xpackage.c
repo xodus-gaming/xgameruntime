@@ -238,16 +238,34 @@ static HRESULT WINAPI x_package_XPackageGetUserLocale( IXPackageImpl4 *iface, SI
     return E_NOTIMPL;
 }
 
+/* Everything a title can ask about is already on disk.
+ *
+ * Chunks are how a package is installed in pieces, so a title can start before
+ * the rest arrives and wait on what it still needs. Xodus extracts a package in
+ * full before it can be launched, so every chunk is Ready and always was.
+ * Refusing to say so leaves a title waiting for content that is already there:
+ * Resident Evil 2 plays its publisher logos and then sits on a black screen. */
 static HRESULT WINAPI x_package_XPackageFindChunkAvailability( IXPackageImpl4 *iface, const char *packageIdentifier, UINT32 selectorCount, XPackageChunkSelector *selectors, XPackageChunkAvailability *availability )
 {
-    FIXME( "iface %p, packageIdentifier %s, selectorCount %u, selectors %p, availability %p stub!\n", iface, packageIdentifier, selectorCount, selectors, availability );
-    return E_NOTIMPL;
+    TRACE( "iface %p, packageIdentifier %s, selectorCount %u, selectors %p, availability %p.\n",
+           iface, debugstr_a( packageIdentifier ), selectorCount, selectors, availability );
+
+    if (!availability) return E_INVALIDARG;
+    *availability = XPackageChunkAvailability_Ready;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_package_XPackageEnumerateChunkAvailability( IXPackageImpl4 *iface, const char *packageIdentifier, XPackageChunkSelectorType type, void *context, XPackageChunkAvailabilityCallback *callback )
 {
-    FIXME( "iface %p, packageIdentifier %s, type %d, context %p, callback %p stub!\n", iface, debugstr_a( packageIdentifier ), type, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, packageIdentifier %s, type %d, context %p, callback %p.\n",
+           iface, debugstr_a( packageIdentifier ), type, context, callback );
+
+    if (!callback) return E_INVALIDARG;
+
+    /* A package installed in one piece has no chunks to enumerate, and an
+     * enumeration that visits nothing is the true answer rather than a
+     * failure. What a title actually waits on is the availability above. */
+    return S_OK;
 }
 
 static HRESULT WINAPI x_package_XPackageChangeChunkInstallOrder( IXPackageImpl4 *iface, const char *packageIdentifier, UINT32 selectorCount, XPackageChunkSelector *selectors )
@@ -337,10 +355,52 @@ static HRESULT WINAPI __PADDING_4__( IXPackageImpl4 *iface )
     return E_NOTIMPL;
 }
 
+/* The packages installed here: this one, and nothing beside it.
+ *
+ * Xodus installs a title on its own -- no downloadable content, no related
+ * packages -- so an enumeration of content visits nothing, and an enumeration
+ * of games visits this one. Refusing outright is what a title cannot work
+ * with: Resident Evil 2 asks for its content packages over and over, burning a
+ * core, and never leaves the black screen after its publisher logos.
+ *
+ * The strings are handed over empty rather than null. A caller is entitled to
+ * read them, and there is nothing here that knows a package's display name. */
+static HRESULT enumerate_packages( XPackageKind kind, void *context, XPackageEnumerationCallback *callback )
+{
+    char identifier[64] = { 0 };
+    XPackageDetails details = { 0 };
+    char *title_id, *store_id;
+
+    if (!callback) return E_INVALIDARG;
+    if (kind != XPackageKind_Game) return S_OK;
+    if (FAILED(package_identifier( identifier, sizeof(identifier) ))) return S_OK;
+
+    title_id = xodus_game_config_value( "TitleId" );
+    store_id = xodus_game_config_value( "StoreId" );
+
+    details.packageIdentifier = identifier;
+    details.kind = XPackageKind_Game;
+    details.displayName = "";
+    details.description = "";
+    details.publisher = "";
+    details.storeId = store_id ? store_id : "";
+    details.titleID = title_id ? title_id : "";
+    details.installing = FALSE;
+    details.index = 0;
+    details.count = 1;
+
+    callback( context, &details );
+
+    free( title_id );
+    free( store_id );
+    return S_OK;
+}
+
 static HRESULT WINAPI x_package_XPackageEnumeratePackages( IXPackageImpl4 *iface, XPackageKind kind, XPackageEnumerationScope scope, void *context, XPackageEnumerationCallback *callback )
 {
-    FIXME( "iface %p, kind %d, scope %d, context %p, callback %p stub!\n", iface, kind, scope, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, kind %d, scope %d, context %p, callback %p.\n",
+           iface, kind, scope, context, callback );
+    return enumerate_packages( kind, context, callback );
 }
 
 static HRESULT WINAPI x_package_XPackageRegisterPackageInstalled( IXPackageImpl4 *iface, XTaskQueueHandle queue, void *context, XPackageInstalledCallback *callback, XTaskQueueRegistrationToken *token )
@@ -390,8 +450,9 @@ static BOOLEAN WINAPI x_package_XPackageUninstallPackage( IXPackageImpl4 *iface,
 
 static HRESULT WINAPI x_package_XPackageEnumeratePackages2( IXPackageImpl4 *iface, XPackageKind kind, XPackageEnumerationScope scope, void *context, XPackageEnumerationCallback *callback )
 {
-    FIXME( "iface %p, kind %d, scope %d, context %p, callback %p stub!\n", iface, kind, scope, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, kind %d, scope %d, context %p, callback %p.\n",
+           iface, kind, scope, context, callback );
+    return enumerate_packages( kind, context, callback );
 }
 
 static HRESULT WINAPI x_package_XPackageRegisterPackageInstalled2( IXPackageImpl4 *iface, XTaskQueueHandle queue, void *context, XPackageInstalledCallback *callback, XTaskQueueRegistrationToken *token )
@@ -414,8 +475,9 @@ static HRESULT WINAPI x_package_XPackageMountWithUiResult( IXPackageImpl4 *iface
 
 static HRESULT WINAPI x_package_XPackageEnumeratePackages3( IXPackageImpl4 *iface, XPackageKind kind, XPackageEnumerationScope scope, void *context, XPackageEnumerationCallback *callback )
 {
-    FIXME( "iface %p, kind %d, scope %d, context %p, callback %p stub!\n", iface, kind, scope, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, kind %d, scope %d, context %p, callback %p.\n",
+           iface, kind, scope, context, callback );
+    return enumerate_packages( kind, context, callback );
 }
 
 static HRESULT WINAPI x_package_XPackageRegisterPackageInstalled3( IXPackageImpl4 *iface, XTaskQueueHandle queue, void *context, XPackageInstalledCallback *callback, XTaskQueueRegistrationToken *token )
