@@ -375,23 +375,125 @@ static HRESULT WINAPI __PADDING__( IXUserImpl6 *iface )
     return E_NOTIMPL;
 }
 
+/* The gamertag, on the user interface itself.
+ *
+ * XUserGetGamertag also lives on IXUserGamertagImpl, but the slot here is the
+ * one Microsoft's own XGameRuntime.dll reaches for: Dead Cells signs in, calls
+ * this, and dereferences the buffer it was promised. Left unimplemented it
+ * returned E_NOTIMPL without writing anything, and the title read the
+ * uninitialised buffer and died on a null pointer straight after printing
+ * "Xbox User signed In".
+ *
+ * The arguments are checked before anything is written. This slot was a
+ * padding entry, so its shape is inferred from where it sits -- between
+ * XUserGetState and XUserGetGamerPictureAsync, exactly where the flat API puts
+ * XUserGetGamertag -- and an inferred signature that turns out wrong must fail
+ * loudly rather than scribble through whatever landed in the register. Guessing
+ * the component-taking form first is what proved it: the check reported a
+ * component of 256 and a size of 1100496, which are the buffer size and the
+ * buffer, one argument further left. This is the form without the component.
+ */
+static HRESULT WINAPI x_user_XUserGetGamertagOnUser( IXUserImpl6 *iface, XUserHandle user_handle, SIZE_T gamertagSize, char *gamertag, SIZE_T *gamertagUsed )
+{
+    struct user_object *user = user_from_handle( user_handle );
+    SIZE_T needed;
+
+    TRACE( "iface %p, user %p, gamertagSize %Iu, gamertag %p, gamertagUsed %p.\n",
+           iface, user_handle, gamertagSize, gamertag, gamertagUsed );
+
+    if (!user || !gamertag) return E_INVALIDARG;
+
+    if (gamertagSize > 0x10000)
+    {
+        ERR( "refusing to write: size %Iu does not look like this call's argument, "
+             "so the slot's signature is wrong.\n", gamertagSize );
+        return E_INVALIDARG;
+    }
+
+    needed = strlen( user->gamertag ) + 1;
+    if (gamertagUsed) *gamertagUsed = needed;
+    if (gamertagSize < needed) return E_NOT_SUFFICIENT_BUFFER;
+
+    memcpy( gamertag, user->gamertag, needed );
+    return S_OK;
+}
+
+/* A placeholder gamer picture: a 1x1 transparent PNG.
+ *
+ * The real picture would have to be fetched from Xbox Live, which is work for
+ * another day. What matters here is that the call answers at all: refusing it
+ * left Dead Cells reading a buffer nothing had written, and it died on a null
+ * pointer immediately after asking -- right after successfully printing the
+ * gamertag. A valid image of no particular appearance is enough for a title to
+ * carry on to its menu. */
+static const BYTE gamer_picture_png[] =
+{
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+    0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+    0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+};
+
+static HRESULT CALLBACK gamer_picture_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    switch (op)
+    {
+    case XAsyncOp_Begin:
+        return IXThreadingImpl_XAsyncSchedule( x_threading_impl, data->async, 0 );
+
+    case XAsyncOp_DoWork:
+        IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, S_OK,
+                                        sizeof(gamer_picture_png) );
+        return E_PENDING;  /* completed above */
+
+    case XAsyncOp_GetResult:
+        if (data->bufferSize < sizeof(gamer_picture_png)) return E_NOT_SUFFICIENT_BUFFER;
+        memcpy( data->buffer, gamer_picture_png, sizeof(gamer_picture_png) );
+        return S_OK;
+
+    default:
+        return S_OK;
+    }
+}
+
 static HRESULT WINAPI x_user_XUserGetGamerPictureAsync( IXUserImpl6 *iface, XUserHandle user, XUserGamerPictureSize pictureSize, XAsyncBlock *async )
 {
-    FIXME( "iface %p, user %p, pictureSize %d, async %p stub!\n", iface, user, pictureSize, async );
-    return E_NOTIMPL;
+    FIXME( "iface %p, user %p, pictureSize %d, async %p: answering with a placeholder.\n",
+           iface, user, pictureSize, async );
+
+    if (!user_from_handle( user )) return E_INVALIDARG;
+
+    return IXThreadingImpl_XAsyncBegin( x_threading_impl, async, NULL,
+                                        x_user_XUserGetGamerPictureAsync,
+                                        "XUserGetGamerPicture", gamer_picture_provider );
 }
 
 static HRESULT WINAPI x_user_XUserGetGamerPictureResultSize( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T *bufferSize )
 {
-    FIXME( "iface %p, async %p, bufferSize %p stub!\n", iface, async, bufferSize );
-    return E_NOTIMPL;
+    TRACE( "iface %p, async %p, bufferSize %p.\n", iface, async, bufferSize );
+
+    if (!bufferSize) return E_INVALIDARG;
+    return IXThreadingImpl_XAsyncGetResultSize( x_threading_impl, async, bufferSize );
 }
 
 static HRESULT WINAPI x_user_XUserGetGamerPictureResult( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T bufferSize, void *buffer, SIZE_T *bufferUsed )
 {
-    FIXME( "iface %p, async %p, bufferSize %Iu, buffer %p, bufferUsed %p stub!\n", iface, async, bufferSize, buffer, bufferUsed );
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, bufferSize %Iu, buffer %p, bufferUsed %p.\n",
+           iface, async, bufferSize, buffer, bufferUsed );
+
+    if (!buffer) return E_INVALIDARG;
+
+    hr = IXThreadingImpl_XAsyncGetResult( x_threading_impl, async,
+                                          x_user_XUserGetGamerPictureAsync,
+                                          bufferSize, buffer, bufferUsed );
+    if (SUCCEEDED(hr) && bufferUsed) *bufferUsed = sizeof(gamer_picture_png);
+    return hr;
 }
+
 
 static HRESULT WINAPI x_user_XUserGetAgeGroup( IXUserImpl6 *iface, XUserHandle user_handle, XUserAgeGroup *ageGroup )
 {
@@ -960,7 +1062,7 @@ static const struct IXUserImpl6Vtbl x_user_vtbl =
     x_user_XUserFindUserById,
     x_user_XUserGetIsGuest,
     x_user_XUserGetState,
-    __PADDING__,
+    x_user_XUserGetGamertagOnUser,
     x_user_XUserGetGamerPictureAsync,
     x_user_XUserGetGamerPictureResultSize,
     x_user_XUserGetGamerPictureResult,

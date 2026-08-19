@@ -354,7 +354,7 @@ interface IXUserImpl : IUnknown
     HRESULT XUserFindUserById( [in] UINT64 userId, [out] XUserHandle *handle );
     HRESULT XUserGetIsGuest( [in] XUserHandle user, [out] BOOLEAN *isGuest );
     HRESULT XUserGetState( [in] XUserHandle user, [out] XUserState *state );
-    HRESULT __PADDING__();
+    HRESULT XUserGetGamertagOnUser( [in] XUserHandle user, [in] SIZE_T gamertagSize, [out, string, size_is(gamertagSize)] char *gamertag, [out, optional] SIZE_T *gamertagUsed );
     HRESULT XUserGetGamerPictureAsync( [in] XUserHandle user, [in] XUserGamerPictureSize pictureSize, [in, out] XAsyncBlock *async );
     HRESULT XUserGetGamerPictureResultSize( [in, out] XAsyncBlock *async, [out] SIZE_T *bufferSize );
     HRESULT XUserGetGamerPictureResult( [in, out] XAsyncBlock *async, [in] SIZE_T bufferSize, [out, size_is(bufferSize)] void *buffer, [out, optional] SIZE_T *bufferUsed );
