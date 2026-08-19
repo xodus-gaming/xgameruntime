@@ -54,9 +54,42 @@ struct initialize_options
     const char *gameConfig;
 };
 
+/* Bring up the process's WinRT apartment.
+ *
+ * Initializing the runtime is what gives a title an apartment to activate WinRT
+ * classes in; titles rely on that rather than calling RoInitialize themselves.
+ * Without it combase has no MTA to join and refuses the activation:
+ * Deep Rock Galactic asks for Windows.System.Profile.AnalyticsInfo, gets
+ * CO_E_NOTINITIALIZED out of ensure_mta, and puts up its own crash dialog with
+ * no message in it. Expedition 33 activates the same class sixty-two times
+ * without trouble because it initializes COM itself.
+ *
+ * Done once and never undone. The apartment is process-wide and outlives any
+ * one initialize/uninitialize pair, and other threads may be inside a call --
+ * the same reasoning that keeps UninitializeApiImpl from tearing anything down.
+ */
+static void ensure_winrt_apartment(void)
+{
+    static LONG initialized;
+    static CO_MTA_USAGE_COOKIE mta_cookie;
+    HRESULT hr;
+
+    if (InterlockedExchange( &initialized, 1 )) return;
+
+    /* CoIncrementMTAUsage, not RoInitialize: this must not put the calling
+     * thread into an apartment of our choosing. RoInitialize does, and that
+     * broke Expedition 33 -- a title that initializes COM itself found the
+     * decision already made and stopped before opening a window. Incrementing
+     * the usage count keeps a process-wide MTA alive for whoever needs one and
+     * leaves every thread's own apartment to the title. */
+    hr = CoIncrementMTAUsage( &mta_cookie );
+    if (FAILED(hr)) WARN( "could not keep a process MTA alive: %#lx.\n", hr );
+}
+
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const struct initialize_options *options )
 {
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
+    ensure_winrt_apartment();
     return S_OK;
 }
 
