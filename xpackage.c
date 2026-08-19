@@ -79,24 +79,70 @@ static HRESULT WINAPI x_package_XPackageGetCurrentProcessPackageIdentifier( IXPa
 
 static BOOLEAN WINAPI x_package_XPackageIsPackagedProcess( IXPackageImpl4 *iface )
 {
-    FIXME( "iface %p stub!\n", iface );
-    return FALSE;
+    TRACE( "iface %p.\n", iface );
+
+    /* Everything reaching this runtime came out of an MSIX package and is run
+     * from its root, beside the appxmanifest and MicrosoftGame.config that
+     * describe it. Answering FALSE sent a title down its unpackaged path:
+     * Deep Rock Galactic asked twice and then put up its own "The Game has
+     * crashed and will close" dialog before opening a window. */
+    return TRUE;
 }
+
+/* A monitor over a title that is already fully installed.
+ *
+ * Xodus extracts a package in full before it can be launched, so there is never
+ * a partial install to watch: every monitor reports complete from the moment it
+ * is made. Refusing to make one is not a soft failure -- Deep Rock Galactic
+ * treats it as fatal, putting up "The Game has crashed and will close" with
+ * "Failed to create installation monitor. 0x80004001" before opening a window.
+ *
+ * The handle carries the size actually on disk so the numbers a title shows are
+ * its own, rather than zeroes. */
+struct installation_monitor
+{
+    UINT64 bytes;
+};
 
 static HRESULT WINAPI x_package_XPackageCreateInstallationMonitor( IXPackageImpl4 *iface, const char *packageIdentifier, UINT32 selectorCount, XPackageChunkSelector *selectors, UINT32 minimumUpdateIntervalMs, XTaskQueueHandle queue, XPackageInstallationMonitorHandle *installationMonitor )
 {
-    FIXME( "iface %p, packageIdentifier %s, selectorCount %u, selectors %p, minimumUpdateIntervalMs %u, queue %p, installationMonitor %p stub!\n", iface, debugstr_a( packageIdentifier ), selectorCount, selectors, minimumUpdateIntervalMs, queue, installationMonitor );
-    return E_NOTIMPL;
+    struct installation_monitor *impl;
+
+    TRACE( "iface %p, packageIdentifier %s, selectorCount %u, selectors %p, "
+           "minimumUpdateIntervalMs %u, queue %p, installationMonitor %p.\n",
+           iface, debugstr_a( packageIdentifier ), selectorCount, selectors,
+           minimumUpdateIntervalMs, queue, installationMonitor );
+
+    if (!installationMonitor) return E_INVALIDARG;
+    if (!(impl = calloc( 1, sizeof(*impl) ))) return E_OUTOFMEMORY;
+
+    /* Byte counts are left at zero. They are only there for a progress bar,
+     * and there is no progress to draw: what a title actually reads is
+     * completed and launchable, both of which are true from the start. */
+    *installationMonitor = (XPackageInstallationMonitorHandle)impl;
+    return S_OK;
 }
 
 static void WINAPI x_package_XPackageCloseInstallationMonitorHandle( IXPackageImpl4 *iface, XPackageInstallationMonitorHandle installationMonitor )
 {
-    FIXME( "iface %p, installationMonitor %p stub!\n", iface, installationMonitor );
+    TRACE( "iface %p, installationMonitor %p.\n", iface, installationMonitor );
+    free( installationMonitor );
 }
 
 static void WINAPI x_package_XPackageGetInstallationProgress( IXPackageImpl4 *iface, XPackageInstallationMonitorHandle installationMonitor, XPackageInstallationProgress *progress )
 {
-    FIXME( "iface %p, installationMonitor %p, progress %p stub!\n", iface, installationMonitor, progress );
+    struct installation_monitor *impl = (struct installation_monitor *)installationMonitor;
+
+    TRACE( "iface %p, installationMonitor %p, progress %p.\n", iface, installationMonitor, progress );
+
+    if (!progress) return;
+
+    /* Installed in full, and therefore launchable and complete. */
+    progress->totalBytes = impl ? impl->bytes : 0;
+    progress->installedBytes = progress->totalBytes;
+    progress->launchBytes = progress->totalBytes;
+    progress->launchable = TRUE;
+    progress->completed = TRUE;
 }
 
 static BOOLEAN WINAPI x_package_XPackageUpdateInstallationMonitor( IXPackageImpl4 *iface, XPackageInstallationMonitorHandle installationMonitor )
@@ -105,10 +151,20 @@ static BOOLEAN WINAPI x_package_XPackageUpdateInstallationMonitor( IXPackageImpl
     return TRUE;
 }
 
+static LONG64 installation_progress_token;
+
 static HRESULT WINAPI x_package_XPackageRegisterInstallationProgressChanged( IXPackageImpl4 *iface, XPackageInstallationMonitorHandle installationMonitor, void *context, XPackageInstallationProgressCallback *callback, XTaskQueueRegistrationToken *token )
 {
-    FIXME( "iface %p, installationMonitor %p, context %p, callback %p, token %p stub!\n", iface, installationMonitor, context, callback, token );
-    return E_NOTIMPL;
+    FIXME( "iface %p, installationMonitor %p, context %p, callback %p, token %p: accepted, "
+           "progress never changes.\n", iface, installationMonitor, context, callback, token );
+
+    if (!token) return E_INVALIDARG;
+
+    /* Nothing will ever be raised -- the package is already complete -- but the
+     * caller still gets a token it can hold and unregister, rather than reading
+     * back whatever was on its stack. */
+    token->token = InterlockedIncrement64( &installation_progress_token );
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_package_XPackageUnregisterInstallationProgressChanged( IXPackageImpl4 *iface, XPackageInstallationMonitorHandle installationMonitor, XTaskQueueRegistrationToken token, BOOLEAN wait )
