@@ -71,10 +71,69 @@ static ULONG WINAPI x_package_Release( IXPackageImpl4 *iface )
     return ref;
 }
 
+/* The package's own identifier, taken from the layout file beside it.
+ *
+ * Every package ships a layout_<guid>.xml at its root, and that guid without
+ * its dashes is the 32 characters a caller asks for here -- titles pass a
+ * bufferSize of 33, which is those characters and a terminator.
+ *
+ * Refusing left the buffer untouched, so Deep Rock Galactic went on to build an
+ * installation monitor for a package identified as "" and then died with a
+ * crash dialog carrying no message at all.
+ *
+ * The root is not always where the executable is -- Unreal ships its binary
+ * several directories down -- so walk up until the layout turns up, the same
+ * way the game config is found. */
+static HRESULT package_identifier( char *buffer, SIZE_T bufferSize )
+{
+    WCHAR path[MAX_PATH];
+    WCHAR *sep;
+
+    if (!GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) )) return E_FAIL;
+    if (!(sep = wcsrchr( path, '\\' ))) return E_FAIL;
+    *sep = 0;
+
+    for (;;)
+    {
+        WCHAR pattern[MAX_PATH];
+        WIN32_FIND_DATAW data;
+        HANDLE find;
+
+        if (wcslen( path ) + ARRAY_SIZE(L"\\layout_*.xml") > ARRAY_SIZE(pattern)) return E_FAIL;
+        wcscpy( pattern, path );
+        wcscat( pattern, L"\\layout_*.xml" );
+
+        if ((find = FindFirstFileW( pattern, &data )) != INVALID_HANDLE_VALUE)
+        {
+            const WCHAR *guid = data.cFileName + ARRAY_SIZE(L"layout_") - 1;
+            SIZE_T used = 0;
+
+            for (; *guid && *guid != '.'; guid++)
+            {
+                if (*guid == '-') continue;
+                if (used + 1 >= bufferSize) { FindClose( find ); return E_NOT_SUFFICIENT_BUFFER; }
+                buffer[used++] = (char)*guid;
+            }
+            buffer[used] = 0;
+            FindClose( find );
+            return used ? S_OK : E_FAIL;
+        }
+
+        if (!(sep = wcsrchr( path, '\\' ))) return E_FAIL;
+        *sep = 0;
+    }
+}
+
 static HRESULT WINAPI x_package_XPackageGetCurrentProcessPackageIdentifier( IXPackageImpl4 *iface, SIZE_T bufferSize, char *buffer )
 {
-    FIXME( "iface %p, bufferSize %Iu, buffer %p stub!\n", iface, bufferSize, buffer );
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE( "iface %p, bufferSize %Iu, buffer %p.\n", iface, bufferSize, buffer );
+
+    if (!buffer || !bufferSize) return E_INVALIDARG;
+    if (FAILED(hr = package_identifier( buffer, bufferSize )))
+        FIXME( "no layout file to take a package identifier from: %#lx.\n", hr );
+    return hr;
 }
 
 static BOOLEAN WINAPI x_package_XPackageIsPackagedProcess( IXPackageImpl4 *iface )
@@ -311,8 +370,16 @@ static HRESULT WINAPI x_package_XPackageUninstallUWPInstance( IXPackageImpl4 *if
 
 static HRESULT WINAPI x_package_XPackageEnumerateFeatures( IXPackageImpl4 *iface, const char *packageIdentifier, void *context, XPackageFeatureEnumerationCallback *callback )
 {
-    FIXME( "iface %p, packageIdentifier %s, context %p, callback %p stub!\n", iface, packageIdentifier, context, callback );
-    return E_NOTIMPL;
+    TRACE( "iface %p, packageIdentifier %s, context %p, callback %p.\n",
+           iface, debugstr_a( packageIdentifier ), context, callback );
+
+    if (!callback) return E_INVALIDARG;
+
+    /* Optional features are declared in MicrosoftGame.config, and nothing
+     * installed here declares any: an enumeration that visits nothing is the
+     * true answer, not a failure. Refusing was enough to end Deep Rock
+     * Galactic, which put up a crash dialog carrying no message at all. */
+    return S_OK;
 }
 
 static BOOLEAN WINAPI x_package_XPackageUninstallPackage( IXPackageImpl4 *iface, const char *packageIdentifier )
