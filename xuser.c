@@ -555,6 +555,8 @@ struct token_request
      * query have to survive alongside the trimmed url used for the lookup. */
     char *method;
     char *path_and_query;
+    /* base64, because the request carrying it to the service is XML. */
+    char *body_base64;
     BOOL utf16;
     /* filled in by DoWork */
     char *token;
@@ -567,6 +569,7 @@ static void token_request_free( struct token_request *req )
     free( req->url );
     free( req->method );
     free( req->path_and_query );
+    free( req->body_base64 );
     free( req->token );
     free( req->signature );
     free( req );
@@ -710,13 +713,52 @@ static HRESULT token_write_result( const struct token_request *req, void *buffer
     return S_OK;
 }
 
+/* Base64, so a body of arbitrary bytes can travel inside XML.
+ *
+ * Written out here rather than pulled in: this module imports combase and
+ * nothing else, and an encoder is shorter than the dependency would be. */
+static char *base64_encode( const void *data, SIZE_T size )
+{
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char *in = data;
+    char *out, *p;
+    SIZE_T i;
+
+    if (!(out = malloc( ((size + 2) / 3) * 4 + 1 ))) return NULL;
+    for (p = out, i = 0; i + 2 < size; i += 3)
+    {
+        *p++ = alphabet[in[i] >> 2];
+        *p++ = alphabet[((in[i] & 0x03) << 4) | (in[i + 1] >> 4)];
+        *p++ = alphabet[((in[i + 1] & 0x0f) << 2) | (in[i + 2] >> 6)];
+        *p++ = alphabet[in[i + 2] & 0x3f];
+    }
+    if (i < size)
+    {
+        *p++ = alphabet[in[i] >> 2];
+        if (i + 1 < size)
+        {
+            *p++ = alphabet[((in[i] & 0x03) << 4) | (in[i + 1] >> 4)];
+            *p++ = alphabet[(in[i + 1] & 0x0f) << 2];
+        }
+        else
+        {
+            *p++ = alphabet[(in[i] & 0x03) << 4];
+            *p++ = '=';
+        }
+        *p++ = '=';
+    }
+    *p = 0;
+    return out;
+}
+
 static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
 {
     static const char format[] = "<XstsTokenRequest><RelyingParty>%s</RelyingParty>"
                                  "<ForceRefresh>%s</ForceRefresh>"
                                  "<AppId>%s</AppId><Url>%s</Url>"
                                  "<Method>%s</Method>"
-                                 "<PathAndQuery>%s</PathAndQuery></XstsTokenRequest>";
+                                 "<PathAndQuery>%s</PathAndQuery>"
+                                 "<Body>%s</Body></XstsTokenRequest>";
     const char *force = force_refresh ? "true" : "false";
     char *request, *reply = NULL, *app_id, *path;
     HRESULT hr;
@@ -731,7 +773,8 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
     path = xml_escape( req->path_and_query ? req->path_and_query : "/" );
 
     len = _scprintf( format, req->relying_party, force, app_id ? app_id : "", req->url,
-                     req->method ? req->method : "GET", path ? path : "/" );
+                     req->method ? req->method : "GET", path ? path : "/",
+                     req->body_base64 ? req->body_base64 : "" );
     if (len < 0 || !(request = malloc( len + 1 )))
     {
         free( app_id );
@@ -739,7 +782,8 @@ static HRESULT token_fetch( struct token_request *req, BOOL force_refresh )
         return E_OUTOFMEMORY;
     }
     sprintf( request, format, req->relying_party, force, app_id ? app_id : "", req->url,
-             req->method ? req->method : "GET", path ? path : "/" );
+             req->method ? req->method : "GET", path ? path : "/",
+             req->body_base64 ? req->body_base64 : "" );
     free( app_id );
     free( path );
 
@@ -792,7 +836,7 @@ static HRESULT CALLBACK token_async_provider( XAsyncOp op, const XAsyncProviderD
 
 static HRESULT token_begin( XUserHandle user, XUserGetTokenAndSignatureOptions options,
                             const char *method, const char *url, SIZE_T body_size,
-                            BOOL utf16, XAsyncBlock *async )
+                            const void *body, BOOL utf16, XAsyncBlock *async )
 {
     struct token_request *req;
     HRESULT hr;
@@ -804,11 +848,12 @@ static HRESULT token_begin( XUserHandle user, XUserGetTokenAndSignatureOptions o
     req->method = strdup( method && *method ? method : "GET" );
     req->path_and_query = path_and_query_from_url( url );
 
-    /* The signature covers the body too. Nothing seen so far sends one -- every
-     * observed call is a GET with bodySize 0 -- so rather than carry bytes that
-     * would have to be escaped for nothing, say so if one ever turns up. */
-    if (body_size)
-        FIXME( "request body of %Iu bytes is not covered by the signature.\n", body_size );
+    /* The signature covers the body too, so it travels with the request. */
+    if (body_size && body && !(req->body_base64 = base64_encode( body, body_size )))
+    {
+        token_request_free( req );
+        return E_OUTOFMEMORY;
+    }
 
     if (!(req->relying_party = relying_party_from_url( url )))
     {
@@ -842,7 +887,7 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureAsync( IXUserImpl6 *iface,
     TRACE( "iface %p, user %p, options %d, method %s, url %s, headerCount %Iu, bodySize %Iu, async %p.\n",
            iface, user, options, debugstr_a( method ), debugstr_a( url ), headerCount, bodySize, async );
 
-    return token_begin( user, options, method, url, bodySize, FALSE, async );
+    return token_begin( user, options, method, url, bodySize, bodyBuffer, FALSE, async );
 }
 
 static HRESULT WINAPI x_user_XUserGetTokenAndSignatureResultSize( IXUserImpl6 *iface, XAsyncBlock *async, SIZE_T *bufferSize )
@@ -877,7 +922,7 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Async( IXUserImpl6 *i
 
     if (!(url_utf8 = utf16_to_utf8( url ))) return E_INVALIDARG;
     method_utf8 = utf16_to_utf8( method );
-    hr = token_begin( user, options, method_utf8, url_utf8, bodySize, TRUE, async );
+    hr = token_begin( user, options, method_utf8, url_utf8, bodySize, bodyBuffer, TRUE, async );
     free( method_utf8 );
     free( url_utf8 );
     return hr;
