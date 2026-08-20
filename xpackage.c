@@ -232,10 +232,34 @@ static BOOLEAN WINAPI x_package_XPackageUnregisterInstallationProgressChanged( I
     return TRUE;
 }
 
+/* The locale a title should present itself in.
+ *
+ * Taken from the user's own locale, as a BCP-47 name like "en-US" -- which is
+ * the form this returns and what a title expects. Refusing left the buffer
+ * untouched and the title reading whatever was on its stack, which is no way to
+ * choose which language's assets to load. */
 static HRESULT WINAPI x_package_XPackageGetUserLocale( IXPackageImpl4 *iface, SIZE_T localeSize, char *locale )
 {
-    FIXME( "iface %p, localeSize %Iu, locale %p stub!\n", iface, localeSize, locale );
-    return E_NOTIMPL;
+    WCHAR name[LOCALE_NAME_MAX_LENGTH];
+    char utf8[LOCALE_NAME_MAX_LENGTH * 3];
+    int len;
+
+    TRACE( "iface %p, localeSize %Iu, locale %p.\n", iface, localeSize, locale );
+
+    if (!locale || !localeSize) return E_INVALIDARG;
+
+    if (!GetUserDefaultLocaleName( name, ARRAY_SIZE(name) ))
+    {
+        WARN( "no user locale; answering en-US.\n" );
+        wcscpy( name, L"en-US" );
+    }
+
+    len = WideCharToMultiByte( CP_UTF8, 0, name, -1, utf8, sizeof(utf8), NULL, NULL );
+    if (!len) return E_FAIL;
+    if ((SIZE_T)len > localeSize) return E_NOT_SUFFICIENT_BUFFER;
+
+    memcpy( locale, utf8, len );
+    return S_OK;
 }
 
 /* Everything a title can ask about is already on disk.
