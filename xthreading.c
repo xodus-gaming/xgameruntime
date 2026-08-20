@@ -132,7 +132,7 @@ static void register_queue( struct task_queue *queue )
     EnterCriticalSection( &live_queues_cs );
     list_add_tail( &live_queues, &queue->entry );
     LeaveCriticalSection( &live_queues_cs );
-    ERR( "QUEUE issued %p work-mode %d completion-mode %d\n", queue,
+    TRACE( "QUEUE issued %p work-mode %d completion-mode %d\n", queue,
          queue->ports[XTaskQueuePort_Work]->mode,
          queue->ports[XTaskQueuePort_Completion]->mode );
 }
@@ -142,7 +142,7 @@ static void unregister_queue( struct task_queue *queue )
     EnterCriticalSection( &live_queues_cs );
     list_remove( &queue->entry );
     LeaveCriticalSection( &live_queues_cs );
-    ERR( "QUEUE destroyed %p\n", queue );
+    TRACE( "QUEUE destroyed %p\n", queue );
 }
 
 /* The lookup without the complaint, for callers where a handle this module did
@@ -321,7 +321,7 @@ static void task_port_run_one( struct task_port *port )
 
     if ((item = task_port_pop( port )))
     {
-        ERR( "PORTQ run item %p (drain, canceled %d)\n", item, port->queue->terminated );
+        TRACE( "PORTQ run item %p (drain, canceled %d)\n", item, port->queue->terminated );
         item->callback( item->context, port->queue->terminated );
         free( item );
     }
@@ -368,7 +368,7 @@ static HRESULT task_port_submit_ex( struct task_port *port, void *context,
     /* Logged before the item is published: once it is on the list and the
      * event is set, a threadpool thread may already have run and freed it,
      * and the port with it if that was the last reference. */
-    ERR( "PORTQ submit item %p queue %p port %d mode %d cb %p\n",
+    TRACE( "PORTQ submit item %p queue %p port %d mode %d cb %p\n",
          item, queue, port->id, port->mode, callback );
     EnterCriticalSection( &queue->cs );
     list_add_tail( &port->items, &item->entry );
@@ -684,7 +684,7 @@ static void CALLBACK async_completion_cb( void *context, BOOLEAN canceled )
      * runs. An operation can finish and still leave the caller waiting if this
      * never happens, which looks identical from the outside. */
     if (async_is_watched( state->identity_name ))
-        ERR( "WATCH callback %p %s (canceled %d, routine %p)\n", async,
+        TRACE( "WATCH callback %p %s (canceled %d, routine %p)\n", async,
              debugstr_a( state->identity_name ), canceled, async->callback );
 
     /* A completion routine has to be code before it is called.
@@ -720,13 +720,13 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
      * result wins and the rest are dropped. */
     if (InterlockedExchange( &state->finished, 1 ))
     {
-        ERR( "GUARD async %p (%s) already finished; ignoring result %#lx.\n", async,
+        WARN( "GUARD async %p (%s) already finished; ignoring result %#lx.\n", async,
              debugstr_a( state->identity_name ), (unsigned long)result );
         return;
     }
 
     if (async_is_watched( state->identity_name ))
-        ERR( "WATCH finish %p %s hr %#lx\n", async,
+        TRACE( "WATCH finish %p %s hr %#lx\n", async,
              debugstr_a( state->identity_name ), (unsigned long)result );
     TRACE( "async %p finishes: %s hr %#lx\n", async,
            debugstr_a( state->identity_name ), (unsigned long)result );
@@ -737,7 +737,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
     if (!async->callback)
     {
         if (async_is_watched( state->identity_name ))
-            ERR( "WATCH finish %p %s has no completion routine; nothing delivered\n",
+            TRACE( "WATCH finish %p %s has no completion routine; nothing delivered\n",
                  async, debugstr_a( state->identity_name ) );
         if (async_owes_cleanup( state )) async_provider_cleanup( state );
         return;
@@ -748,7 +748,7 @@ static void async_finish( struct async_state *state, HRESULT result, SIZE_T requ
         /* The completion routine holds its own reference so the state cannot
          * be torn down between scheduling and running. */
         if (async_is_watched( state->identity_name ))
-            ERR( "WATCH deliver %p %s on port %p (mode %d, queue %p, terminated %d)\n",
+            TRACE( "WATCH deliver %p %s on port %p (mode %d, queue %p, terminated %d)\n",
                  async, debugstr_a( state->identity_name ),
                  queue->ports[XTaskQueuePort_Completion],
                  queue->ports[XTaskQueuePort_Completion]->mode, queue, queue->terminated );
@@ -790,7 +790,7 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
      * provider again would ask it to work on something it has finished with. */
     if (InterlockedCompareExchange( &state->finished, 0, 0 ))
     {
-        ERR( "GUARD async %p (%s) finished before its scheduled work ran.\n",
+        WARN( "GUARD async %p (%s) finished before its scheduled work ran.\n",
              state->async, debugstr_a( state->identity_name ) );
         async_state_release( state );
         return;
@@ -799,7 +799,7 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
     if (state->work) hr = state->work( state->async );
     else hr = state->provider( XAsyncOp_DoWork, &data );
     if (async_is_watched( state->identity_name ))
-        ERR( "WATCH dowork %p %s -> %#lx%s\n", state->async,
+        TRACE( "WATCH dowork %p %s -> %#lx%s\n", state->async,
              debugstr_a( state->identity_name ), (unsigned long)hr,
              hr == E_PENDING ? " (provider will complete it later)" : "" );
     TRACE( "async %p work: %s -> %#lx\n", state->async,
@@ -971,7 +971,7 @@ static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlo
         return hr;
 
     if (async_is_watched( identityName ))
-        ERR( "WATCH begin %p %s queue %p callback %p identity %p\n", asyncBlock,
+        TRACE( "WATCH begin %p %s queue %p callback %p identity %p\n", asyncBlock,
              debugstr_a( identityName ), asyncBlock->queue, asyncBlock->callback, identity );
     TRACE( "async %p begins: %s\n", asyncBlock, debugstr_a( identityName ) );
 
@@ -1010,7 +1010,7 @@ static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsync
     /* Whether the provider asks for work at all is the difference between it
      * waiting on something of its own and us failing to run what it queued. */
     if (async_is_watched( state->identity_name ))
-        ERR( "WATCH schedule %p %s delay %u\n", asyncBlock,
+        TRACE( "WATCH schedule %p %s delay %u\n", asyncBlock,
              debugstr_a( state->identity_name ), delayInMs );
     TRACE( "async %p scheduled: %s delay %u\n", asyncBlock,
            debugstr_a( state->identity_name ), delayInMs );
@@ -1063,7 +1063,7 @@ static void WINAPI x_threading_XAsyncComplete( IXThreadingImpl *iface, XAsyncBlo
         return;
     }
     if (async_is_watched( state->identity_name ))
-        ERR( "WATCH complete %p %s hr %#lx\n", asyncBlock,
+        TRACE( "WATCH complete %p %s hr %#lx\n", asyncBlock,
              debugstr_a( state->identity_name ), (unsigned long)result );
     async_finish( state, result, requiredBufferSize );
 }
@@ -1222,7 +1222,7 @@ static HRESULT WINAPI x_threading_XTaskQueueDuplicateHandle( IXThreadingImpl *if
     TRACE( "iface %p, queueHandle %p, duplicatedHandle %p.\n", iface, queueHandle, duplicatedHandle );
 
     if (!impl)
-        ERR( "QUEUE duplicate refused for %p, asked for by %p\n",
+        TRACE( "QUEUE duplicate refused for %p, asked for by %p\n",
              queueHandle, __builtin_return_address(0) );
     if (!impl || !duplicatedHandle) return E_INVALIDARG;
 
@@ -1245,7 +1245,7 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
      * queue that never receives, and the two look identical unless the empty
      * pumps are visible too. XODUS_TRACE_DISPATCH turns them on. */
     if (trace_dispatch())
-        ERR( "PORTQ pump queue %p port %d timeout %u\n", impl, port, timeoutInMs );
+        TRACE( "PORTQ pump queue %p port %d timeout %u\n", impl, port, timeoutInMs );
 
     if (!(item = task_port_pop( impl->ports[port] )))
     {
@@ -1260,7 +1260,7 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
         if (!(item = task_port_pop( impl->ports[port] ))) return FALSE;
     }
 
-    ERR( "PORTQ run item %p (dispatch, canceled %d)\n", item, impl->terminated );
+    TRACE( "PORTQ run item %p (dispatch, canceled %d)\n", item, impl->terminated );
     item->callback( item->context, impl->terminated );
     free( item );
     return TRUE;
@@ -1370,10 +1370,10 @@ static LONG WINAPI report_callback_fault( EXCEPTION_POINTERS *info, void *ctx )
 
     if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
 
-    ERR( "FAULT in termination callback: %s at %p (callback %p, context %p)\n",
+    TRACE( "FAULT in termination callback: %s at %p (callback %p, context %p)\n",
          rec->ExceptionInformation[0] ? "write" : "read",
          (void *)rec->ExceptionInformation[1], notice->callback, notice->context );
-    ERR( "FAULT rip %p rsp %p rcx %p rdx %p\n", (void *)info->ContextRecord->Rip,
+    TRACE( "FAULT rip %p rsp %p rcx %p rdx %p\n", (void *)info->ContextRecord->Rip,
          (void *)info->ContextRecord->Rsp, (void *)info->ContextRecord->Rcx,
          (void *)info->ContextRecord->Rdx );
 
@@ -1393,7 +1393,7 @@ static LONG WINAPI report_callback_fault( EXCEPTION_POINTERS *info, void *ctx )
         ULONG_PTR v = sp[i];
         if (v > 0x140000000 && v < 0x150000000)
         {
-            ERR( "FAULT stack[%u] %p\n", i, (void *)v );
+            TRACE( "FAULT stack[%u] %p\n", i, (void *)v );
             shown++;
         }
     }
@@ -1404,7 +1404,7 @@ static void CALLBACK termination_notice_cb( void *context, BOOLEAN canceled )
 {
     struct termination_notice *notice = context;
 
-    ERR( "TERM notice delivered %p (callback %p, context %p, canceled %d)\n",
+    TRACE( "TERM notice delivered %p (callback %p, context %p, canceled %d)\n",
          notice, notice->callback, notice->context, canceled );
     /* Off unless asked for. Wrapping a title's callback puts a handler frame
      * between it and whatever was catching its faults before, and Deep Rock
@@ -1438,7 +1438,7 @@ static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, X
 
     if (!impl) return E_INVALIDARG;
 
-    ERR( "TERM queue %p composite %d wait %d context %p callback %p already %d completion_mode %d\n",
+    TRACE( "TERM queue %p composite %d wait %d context %p callback %p already %d completion_mode %d\n",
          impl, impl->composite, wait, callbackContext, callback, impl->terminated,
          impl->ports[XTaskQueuePort_Completion]->mode );
 

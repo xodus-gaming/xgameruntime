@@ -82,21 +82,21 @@ static LONG CALLBACK trace_exception( EXCEPTION_POINTERS *info )
             if (VirtualQuery( sp, &caller, sizeof(caller) ) && caller.State == MEM_COMMIT)
             {
                 VirtualQuery( *sp, &caller, sizeof(caller) );
-                ERR( "EXC jumped here from %p (in a region based at %p, type %#lx)\n",
+                TRACE( "EXC jumped here from %p (in a region based at %p, type %#lx)\n",
                      *sp, caller.AllocationBase, caller.Type );
             }
         }
 
         if (VirtualQuery( addr, &mbi, sizeof(mbi) ))
-            ERR( "EXC %#lx at %p: %s %p -- page state %#lx protect %#lx type %#lx (rip %p)\n",
+            TRACE( "EXC %#lx at %p: %s %p -- page state %#lx protect %#lx type %#lx (rip %p)\n",
                  rec->ExceptionCode, rec->ExceptionAddress, how, addr,
                  mbi.State, mbi.Protect, mbi.Type, (void *)info->ContextRecord->Rip );
         else
-            ERR( "EXC %#lx at %p: %s %p -- not mapped (rip %p)\n", rec->ExceptionCode,
+            TRACE( "EXC %#lx at %p: %s %p -- not mapped (rip %p)\n", rec->ExceptionCode,
                  rec->ExceptionAddress, how, addr, (void *)info->ContextRecord->Rip );
     }
     else
-        ERR( "EXC %#lx at %p (rip %p, rsp %p)\n", rec->ExceptionCode, rec->ExceptionAddress,
+        TRACE( "EXC %#lx at %p (rip %p, rsp %p)\n", rec->ExceptionCode, rec->ExceptionAddress,
              (void *)info->ContextRecord->Rip, (void *)info->ContextRecord->Rsp );
 
     return EXCEPTION_CONTINUE_SEARCH;
