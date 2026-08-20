@@ -98,7 +98,12 @@ HRESULT WINAPI QueryApiImpl( const GUID *classId, REFIID interfaceId, void **out
  * caller's completion routine on the block's queue exactly as a real async
  * operation would; xasync_peek_status() reads that result back out in the
  * matching *Result() call. */
-HRESULT xasync_complete_static( XAsyncBlock *async, HRESULT result );
+HRESULT xasync_complete_static_name( XAsyncBlock *async, HRESULT result, const char *name );
+/* The caller's name rides along so a completion can be told apart in a trace:
+ * an operation that finishes without one is anonymous exactly when you most
+ * want to know which one it was. */
+#define xasync_complete_static( async, result ) \
+    xasync_complete_static_name( (async), (result), __func__ )
 HRESULT xasync_peek_status( XAsyncBlock *async );
 
 /*

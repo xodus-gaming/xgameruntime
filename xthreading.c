@@ -132,7 +132,9 @@ static void register_queue( struct task_queue *queue )
     EnterCriticalSection( &live_queues_cs );
     list_add_tail( &live_queues, &queue->entry );
     LeaveCriticalSection( &live_queues_cs );
-    ERR( "QUEUE issued %p\n", queue );
+    ERR( "QUEUE issued %p work-mode %d completion-mode %d\n", queue,
+         queue->ports[XTaskQueuePort_Work]->mode,
+         queue->ports[XTaskQueuePort_Completion]->mode );
 }
 
 static void unregister_queue( struct task_queue *queue )
@@ -609,14 +611,33 @@ static struct task_queue *async_resolve_queue( XAsyncBlock *async )
  * A title's shutdown waits on libHttpClient's cleanup operations, and the
  * question is only ever whether those get driven: they are named, so match on
  * the name and leave the rest at TRACE. */
+/* Which operations to follow through their whole lifecycle.
+ *
+ * XODUS_WATCH_ASYNC names a substring to match, or "*" for everything, which is
+ * how you find out what a title is waiting on when it stops making calls. The
+ * default follows cleanup and the HTTP call libHttpClient still believes is
+ * running when it starts tearing down -- it cancels that block long after the
+ * block completed, which only makes sense if its own record of active requests
+ * never lost the entry. */
 static BOOL async_is_watched( const char *name )
 {
+    static const char *filter;
+    static LONG once;
+
     if (!name) return FALSE;
-    /* Cleanup / cleanup_async, and the HTTP call libHttpClient still believes
-     * is running when it starts tearing down -- it cancels that block long
-     * after the block completed, which only makes sense if its own record of
-     * active requests never lost the entry. */
+    if (!InterlockedExchange( &once, 1 )) filter = getenv( "XODUS_WATCH_ASYNC" );
+    if (filter) return !strcmp( filter, "*" ) || !!strstr( name, filter );
     return strstr( name, "leanup" ) || strstr( name, "HttpCallPerformAsync" );
+}
+
+/* Whether to log pumps that find nothing. Off by default: a title pumping every
+ * frame would bury everything else. */
+static BOOL trace_dispatch(void)
+{
+    static int enabled = -1;
+
+    if (enabled == -1) enabled = !!getenv( "XODUS_TRACE_DISPATCH" );
+    return enabled;
 }
 
 /* Whether an address is somewhere a call can legitimately go. */
@@ -767,12 +788,12 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
     async_state_release( state );
 }
 
-HRESULT xasync_complete_static( XAsyncBlock *async, HRESULT result )
+HRESULT xasync_complete_static_name( XAsyncBlock *async, HRESULT result, const char *name )
 {
     struct async_state *state;
     HRESULT hr;
 
-    if (FAILED(hr = async_state_create( async, NULL, NULL, NULL, NULL, &state ))) return hr;
+    if (FAILED(hr = async_state_create( async, NULL, NULL, name, NULL, &state ))) return hr;
     async_finish( state, result, 0 );
     return S_OK;
 }
@@ -1168,6 +1189,13 @@ static BOOLEAN WINAPI x_threading_XTaskQueueDispatch( IXThreadingImpl *iface, XT
     TRACE( "iface %p, queue %p, port %d, timeoutInMs %d.\n", iface, queue, port, timeoutInMs );
 
     if (!impl || port > XTaskQueuePort_Completion) return FALSE;
+
+    /* Every pump, not just the ones that find something. A title that stops
+     * making progress is either waiting on a queue nobody drains or draining a
+     * queue that never receives, and the two look identical unless the empty
+     * pumps are visible too. XODUS_TRACE_DISPATCH turns them on. */
+    if (trace_dispatch())
+        ERR( "PORTQ pump queue %p port %d timeout %u\n", impl, port, timeoutInMs );
 
     if (!(item = task_port_pop( impl->ports[port] )))
     {
