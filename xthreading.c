@@ -788,14 +788,41 @@ static void CALLBACK async_dowork_cb( void *context, BOOLEAN canceled )
     async_state_release( state );
 }
 
+/* An operation whose answer is already known still has to travel the queue. */
+static HRESULT CALLBACK static_result_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    if (op == XAsyncOp_DoWork) return (HRESULT)(ULONG_PTR)data->context;
+    return S_OK;
+}
+
 HRESULT xasync_complete_static_name( XAsyncBlock *async, HRESULT result, const char *name )
 {
-    struct async_state *state;
     HRESULT hr;
 
-    if (FAILED(hr = async_state_create( async, NULL, NULL, name, NULL, &state ))) return hr;
-    async_finish( state, result, 0 );
-    return S_OK;
+    /* Deliberately not finished on the spot.
+     *
+     * The GDK runs an operation's work on its queue's work port, and titles are
+     * written to that: the usual way to wait for one is
+     *
+     *     XTaskQueueCreate( Manual, Manual, &queue );
+     *     XSomethingAsync( ..., &async );
+     *     XTaskQueueDispatch( queue, Work, INFINITE );
+     *     XTaskQueueDispatch( queue, Completion, INFINITE );
+     *
+     * Completing inside the call puts the completion straight on the completion
+     * port and leaves the work port empty, so that first dispatch waits forever
+     * for work that was already done. Resident Evil 2 hangs there on a black
+     * screen after the logos, waiting on the licence query.
+     *
+     * So schedule it like any other operation. The answer is computed by the
+     * caller before we get here; all this does is deliver it the way the GDK
+     * would. */
+    if (FAILED(hr = IXThreadingImpl_XAsyncBegin( x_threading_impl, async,
+                                                 (void *)(ULONG_PTR)result,
+                                                 static_result_provider, name,
+                                                 static_result_provider )))
+        return hr;
+    return IXThreadingImpl_XAsyncSchedule( x_threading_impl, async, 0 );
 }
 
 HRESULT xasync_peek_status( XAsyncBlock *async )
