@@ -416,8 +416,9 @@ static void CALLBACK delayed_item_cb( PTP_CALLBACK_INSTANCE instance, void *cont
 /* ---------------------------------------------------------------------- */
 
 /*
- * XAsyncBlock exposes internal[4] pointers of caller-owned scratch space; we
- * keep a pointer to our own state in internal[0] and never touch the rest.
+ * XAsyncBlock ends in a block of caller-owned scratch space, which is where an
+ * implementation keeps whatever it needs to recognise the block again. We keep
+ * a pointer to our own state there, and a signature beside it.
  */
 struct async_state
 {
@@ -445,20 +446,40 @@ struct async_state
  * address 0xFFFFFFFFFFFFFFFF. Keep a signature beside the pointer and only
  * believe the pointer when the signature is there.
  */
-#define ASYNC_BLOCK_SIGNATURE ((void *)(ULONG_PTR)0x584f44555341ull)  /* "XODUSA" */
+#define ASYNC_BLOCK_SIGNATURE ((ULONG_PTR)0x584f44555341ull)  /* "XODUSA" */
+
+/* What we keep in that scratch space.
+ *
+ * Copied in and out rather than written through a cast, because the header
+ * declares the space as an array of some element type and that type is not ours
+ * to depend on -- it has been pointers and it is now unsigned. Copying works
+ * whichever it is, and only requires that the space be big enough, which the
+ * assertion below checks at compile time. */
+struct async_link
+{
+    struct async_state *state;
+    ULONG_PTR signature;
+};
+
+C_ASSERT( sizeof(struct async_link) <= sizeof(((XAsyncBlock *)0)->internal) );
 
 static inline struct async_state *async_state_from_block( XAsyncBlock *async )
 {
-    if (!async || async->internal[1] != ASYNC_BLOCK_SIGNATURE) return NULL;
-    return async->internal[0];
+    struct async_link link;
+
+    if (!async) return NULL;
+    memcpy( &link, async->internal, sizeof(link) );
+    if (link.signature != ASYNC_BLOCK_SIGNATURE) return NULL;
+    return link.state;
 }
 
 /* Stop believing this block: its state is about to go away. */
 static inline void async_block_invalidate( XAsyncBlock *async )
 {
+    struct async_link link = { NULL, 0 };
+
     if (!async) return;
-    async->internal[0] = NULL;
-    async->internal[1] = NULL;
+    memcpy( async->internal, &link, sizeof(link) );
 }
 
 /* Tell the provider to let go of the operation, once and once only.
@@ -538,8 +559,10 @@ static HRESULT async_state_create( XAsyncBlock *async, void *context, const void
      * pointer into its own image, which is why handles are validated at all. */
     if ((state->queue = queue_lookup( async->queue ))) task_queue_addref( state->queue );
 
-    async->internal[0] = state;
-    async->internal[1] = ASYNC_BLOCK_SIGNATURE;
+    {
+        struct async_link link = { state, ASYNC_BLOCK_SIGNATURE };
+        memcpy( async->internal, &link, sizeof(link) );
+    }
     *out = state;
     return S_OK;
 }
