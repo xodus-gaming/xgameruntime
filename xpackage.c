@@ -195,16 +195,43 @@ static HRESULT WINAPI x_package_XPackageMount( IXPackageImpl4 *iface, const char
     return E_NOTIMPL;
 }
 
+/* These two used to be plain E_NOTIMPL stubs. That broke every UE5 title we
+ * tried (Grounded, A Game About Digging A Hole, Pigeon Simulator): UE5's
+ * `FIoStoreReader` calls XPackageGetMountPath[Size] right after mounting the
+ * title's package to find out where its own .ucas/.utoc container files
+ * live on disk, and treats a failed HRESULT here as fatal - the process
+ * either exits immediately or throws a LowLevelFatalError before any window
+ * ever appears, with nothing more specific logged than "stub!" in the wine
+ * trace to point at why.
+ *
+ * On real Xbox/Windows this answers "what directory is package <mount>
+ * mounted at", backed by a real UWP package mount. This fork doesn't do a
+ * real package mount at all - xodus-cli's `run` command launches the game
+ * directly from wherever it was extracted to, with that directory already
+ * set as wine's current working directory (see run.rs). So for every title
+ * this fork can run, "where is this package mounted" and "what is the
+ * current working directory" are the same question, and GetCurrentDirectoryA
+ * answers it correctly without needing any real mount-table bookkeeping.
+ *
+ * `mount`/`pathSize` aren't validated beyond a null check because there's
+ * only ever the one implicit mount (the process's own package) in this
+ * model - a real multi-package mount table would need to track handles
+ * properly, but nothing exercises that path with the current design.
+ */
 static HRESULT WINAPI x_package_XPackageGetMountPathSize( IXPackageImpl4 *iface, XPackageMountHandle mount, SIZE_T *pathSize )
 {
-    FIXME( "iface %p, mount %p, pathSize %p stub!\n", iface, mount, pathSize );
-    return E_NOTIMPL;
+    TRACE( "iface %p, mount %p, pathSize %p.\n", iface, mount, pathSize );
+    if (!pathSize) return E_POINTER;
+    *pathSize = MAX_PATH;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_package_XPackageGetMountPath( IXPackageImpl4 *iface, XPackageMountHandle mount, SIZE_T pathSize, char *path )
 {
-    FIXME( "iface %p, mount %p, pathSize %Iu, path %p stub!\n", iface, mount, pathSize, path );
-    return E_NOTIMPL;
+    TRACE( "iface %p, mount %p, pathSize %Iu, path %p.\n", iface, mount, pathSize, path );
+    if (!path || !pathSize) return E_POINTER;
+    if (!GetCurrentDirectoryA( (DWORD)pathSize, path )) return E_FAIL;
+    return S_OK;
 }
 
 static void WINAPI x_package_XPackageCloseMountHandle( IXPackageImpl4 *iface, XPackageMountHandle mount )
