@@ -21,12 +21,13 @@
 
 #include "../private.h"
 
-#include <private/winrt/IAsyncImpl.hpp>
 #include <private/list.h>
 #include <private/os.h>
 #include <private/env.h>
 
 #include "Structs.hpp"
+
+#include <private/IXAsync.hpp>
 
 #include <ntstatus.h>
 #include <winstring.h>
@@ -145,22 +146,20 @@ public:
     HRESULT WINAPI
     InitializeSocket() override
     {
+        HRESULT hr = S_OK;
         TRACE("\n");
-        return AsyncAction::Create( static_cast<IUnknown *>(this), nullptr, InitializeSocketThread, nullptr );
+        return XAsync<IUnknown *>::Create( static_cast<IUnknown *>(this), nullptr, nullptr, InitializeSocketThread, nullptr );
     }
 
     HRESULT WINAPI
-    SendRequestAsync( IXodusIPCPacket *packet, IAsyncOperation<IXodusIPCPacket *> **operation ) override
+    SendRequestAsync( IXodusIPCPacket *packet, IXAsync<IXodusIPCPacket *> **operation ) override
     {
         HRESULT hr;
 
         TRACE("packet %p, operation %p.\n", packet, operation );
 
         packet->AddRef();
-        hr = AsyncOperation<IXodusIPCPacket *>::Create( static_cast<IUnknown *>(this),
-                                packet, SendRequest, operation );
-
-        return hr;
+        return XAsync<IXodusIPCPacket *>::Create( static_cast<IUnknown *>(this), packet, nullptr, SendRequest, operation );
     }
 
     HRESULT WINAPI

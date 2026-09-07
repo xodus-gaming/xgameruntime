@@ -22,9 +22,9 @@
 
 #include "../private.h"
 
-#include <private/winrt/IAsyncImpl.hpp>
-
 #include "Structs.hpp"
+
+#include <private/IXAsync.hpp>
 
 #include <winstring.h>
 #include <atomic>
@@ -110,14 +110,14 @@ public:
 
     /* IXodusService Methods */
     HRESULT WINAPI
-    Ping( IAsyncAction **operation ) override
+    Ping( IXAsync<IUnknown *> **operation ) override
     {
         TRACE("operation %p.\n", operation);
-        return AsyncAction::Create( static_cast<IUnknown *>(this), nullptr, PingAsync, operation );
+        return XAsync<IUnknown *>::Create( static_cast<IUnknown *>(this), nullptr, nullptr, PingAsync, operation );
     }
 
     HRESULT WINAPI
-    MsaTokenRequest( HSTRING clientId, boolean allowUI, boolean fullTrust, IAsyncOperation<IMsaTokenResponse *> **operation ) override
+    MsaTokenRequest( HSTRING clientId, boolean allowUI, boolean fullTrust, IXAsync<IMsaTokenResponse *> **operation ) override
     {
         HRESULT hr;
         HSTRING clientIdCopy;
@@ -130,8 +130,7 @@ public:
 
         params = new MsaTokenRequestParams( { clientIdCopy, allowUI, fullTrust } );
 
-        return AsyncOperation<IMsaTokenResponse *>::Create( static_cast<IUnknown *>(this),
-                    static_cast<PVOID>(params), MsaTokenRequestAsync, operation );
+        return XAsync<IMsaTokenResponse *>::Create( static_cast<IUnknown *>(this), static_cast<PVOID>(params), nullptr, MsaTokenRequestAsync, operation );
     }
 
 private:
@@ -148,7 +147,6 @@ private:
         auto params = static_cast<MsaTokenRequestParams *>(param);
 
         BYTE *messageBuffer;
-        DWORD ret;
         LPSTR xmlStr = nullptr;
         UINT16 messageType;
         HRESULT status = S_OK;
@@ -156,10 +154,11 @@ private:
 
         IMsaTokenResponse *tokenResponse = nullptr;
         IXodusIPCPacket *xodusPacket = nullptr;
+        IXodusIPCPacket *xodusPacketResult = nullptr;
         IBufferByteAccess *messageByteAccess = nullptr;
         IBuffer *message = nullptr;
         IBufferFactory *bufferFactory = nullptr;
-        IAsyncOperation<IXodusIPCPacket *> *response = nullptr;
+        IXAsync<IXodusIPCPacket *> *response = nullptr;
 
         TRACE("invoker %p, param %p, result %p\n", invoker, param, result);
 
@@ -198,24 +197,15 @@ private:
         status = xodus_ipclayer->SendRequestAsync( xodusPacket, &response );
         if ( FAILED( status ) ) goto _CLEANUP;
 
-        ret = AsyncOperationCompletedHandler<IXodusIPCPacket *>::await_AsyncOperation( response, INFINITE );
-        if ( ret )
-        {
-            status = E_FAIL;
-            goto _CLEANUP;
-        }
+        status = response->GetResults( TRUE, &xodusPacketResult );
+        if ( FAILED( status ) ) goto _CLEANUP;
 
         xodusPacket->Release();
-        xodusPacket = nullptr;
-
         message->Release();
         message = nullptr;
 
-        status = response->GetResults( &xodusPacket );
-        if ( FAILED( status ) ) goto _CLEANUP;
-
-        xodusPacket->get_MessageType( &messageType );
-        xodusPacket->get_Message( &message );
+        xodusPacketResult->get_MessageType( &messageType );
+        xodusPacketResult->get_Message( &message );
         status = message->QueryInterface<IBufferByteAccess>( &messageByteAccess );
         if ( FAILED( status ) ) goto _CLEANUP;
 
@@ -240,6 +230,7 @@ _CLEANUP:
         if ( message ) message->Release();
         if ( messageByteAccess ) messageByteAccess->Release();
         if ( xodusPacket ) xodusPacket->Release();
+        if ( xodusPacketResult ) xodusPacketResult->Release();
         if ( response ) response->Release();
         if ( params->clientId ) WindowsDeleteString( params->clientId );
         if ( params ) delete params;
@@ -255,9 +246,10 @@ _CLEANUP:
         HSTRING bufferClass;
 
         IXodusIPCPacket *xodusPacket = nullptr;
+        IXodusIPCPacket *xodusPacketResult = nullptr;
         IBuffer *message = nullptr;
         IBufferFactory *bufferFactory = nullptr;
-        IAsyncOperation<IXodusIPCPacket *> *response = nullptr;
+        IXAsync<IXodusIPCPacket *> *response = nullptr;
 
         TRACE("invoker %p, param %p, result %p\n", invoker, param, result);
 
@@ -279,23 +271,14 @@ _CLEANUP:
 
         xodus_ipclayer->SendRequestAsync( xodusPacket, &response );
 
-        ret = AsyncOperationCompletedHandler<IXodusIPCPacket *>::await_AsyncOperation( response, INFINITE );
-        if ( ret )
-        {
-            status = E_FAIL;
-            goto _CLEANUP;
-        }
+        status = response->GetResults( TRUE, &xodusPacketResult );
+        if ( FAILED( status ) ) goto _CLEANUP;
 
         xodusPacket->Release();
-        xodusPacket = nullptr;
-
         message->Release();
         message = nullptr;
 
-        // confirm that we actually PONGed
-        status = response->GetResults( &xodusPacket );
-        if ( FAILED( status ) ) return status;
-        xodusPacket->get_MessageType( &messageType );
+        xodusPacketResult->get_MessageType( &messageType );
         if ( messageType != 2 /* PONG */)
             return E_INVALIDARG;
 
@@ -305,6 +288,7 @@ _CLEANUP:
         if ( message ) message->Release();
         if ( response ) response->Release();
         if ( xodusPacket ) xodusPacket->Release();
+        if ( xodusPacketResult ) xodusPacketResult->Release();
 
         return status;
     }

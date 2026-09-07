@@ -35,6 +35,8 @@ import "windows.foundation.collections.idl";
 import "windows.storage.streams.idl";
 import "windows.system.idl";
 
+import "async.idl";
+
 // --- xgameruntime --- //
 
 namespace Xodus
@@ -62,10 +64,9 @@ namespace Xodus
 
     declare
     {
-        interface Windows.Foundation.AsyncOperationCompletedHandler<Xodus.IXodusIPCPacket *>;
-        interface Windows.Foundation.IAsyncOperation<Xodus.IXodusIPCPacket *>;
-        interface Windows.Foundation.AsyncOperationCompletedHandler<Xodus.IMsaTokenResponse *>;
-        interface Windows.Foundation.IAsyncOperation<Xodus.IMsaTokenResponse *>;
+        interface XGameRuntime.IXAsync<Xodus.IMsaTokenResponse *>;
+        interface XGameRuntime.IXAsync<Xodus.IXodusIPCPacket *>;
+        interface XGameRuntime.IXAsync<IUnknown *>;
     }
 
     [
@@ -98,7 +99,7 @@ namespace Xodus
     interface IIPCLayer : IInspectable
     {
         HRESULT InitializeSocket();
-        HRESULT SendRequestAsync( [in] Xodus.IXodusIPCPacket *packet, [out, retval] Windows.Foundation.IAsyncOperation<Xodus.IXodusIPCPacket *> **operation );
+        HRESULT SendRequestAsync( [in] Xodus.IXodusIPCPacket *packet, [out, retval] XGameRuntime.IXAsync<Xodus.IXodusIPCPacket *> **operation );
         [eventadd] HRESULT ResponseReceived( [in] Xodus.IPCResponseHandler *handler, [out, retval] EventRegistrationToken *token );
         [eventremove] HRESULT ResponseReceived( [in] EventRegistrationToken token );
     }
@@ -108,8 +109,8 @@ namespace Xodus
     ]
     interface IXodusService : IInspectable
     {
-        HRESULT Ping( [out, retval] Windows.Foundation.IAsyncAction **operation );
-        HRESULT MsaTokenRequest( [in] HSTRING clientId, [in] boolean allowUI, [in] boolean fullTrust, [out, retval] Windows.Foundation.IAsyncOperation<Xodus.IMsaTokenResponse *> **operation );
+        HRESULT Ping( [out, retval] XGameRuntime.IXAsync<IUnknown *> **operation );
+        HRESULT MsaTokenRequest( [in] HSTRING clientId, [in] boolean allowUI, [in] boolean fullTrust, [out, retval] XGameRuntime.IXAsync<Xodus.IMsaTokenResponse *> **operation );
     }
 
     [

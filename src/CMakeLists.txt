@@ -38,7 +38,7 @@ set_target_properties(xgameruntime PROPERTIES
 
 target_link_libraries(xgameruntime PRIVATE
         xgameruntime-common
-        winrt
+        runtimeobject
         ws2_32
         LibXml2 )
 

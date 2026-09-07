@@ -21,8 +21,6 @@
 
 #include "../private.h"
 
-#include <private/winrt/IAsyncImpl.hpp>
-
 #include "Structs.hpp"
 
 #include <libxml/parser.h>

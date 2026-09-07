@@ -55,7 +55,7 @@
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>
 
-#include <private/xodusprovider.h>
+#include <xodusprovider.h>
 
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
