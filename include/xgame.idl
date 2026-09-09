@@ -61,4 +61,10 @@ coclass XGameImpl
     [default] interface IXGameImpl3;
 }
 
+HRESULT __stdcall XGameGetXboxTitleId( [out] UINT32 *titleId );
+
+void __stdcall XLaunchNewGame( [in] const char *exePath, [in, optional] const char *args, [in, optional] XUserHandle defaultUser );
+
+HRESULT __stdcall XLaunchRestartOnCrash( [in, optional] const char *args, [in] UINT32 reserved );
+
 cpp_quote("#endif")

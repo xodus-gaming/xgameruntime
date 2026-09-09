@@ -35,6 +35,7 @@ extern "C" {
 
 #ifdef _WIN32
 #include <processthreadsapi.h>
+#include <winstring.h>
 #define gettid() GetCurrentThreadId()
 #else
 #include <sys/syscall.h>
@@ -134,6 +135,38 @@ static inline LPCSTR debugstr_guid( const GUID *id )
     return str;
 }
 
+#ifdef _WIN32
+static inline LPCSTR debugstr_hstring( HSTRING hstr )
+{
+    static thread_local CHAR str[1024];
+
+    if (!hstr)
+    {
+        str[0] = '\0';
+        return str;
+    }
+
+    UINT32 len;
+    LPCWSTR wstr = WindowsGetStringRawBuffer( hstr, &len );
+
+    if ( !wstr || !len )
+    {
+        str[0] = '\0';
+        return str;
+    }
+
+    int ret = WideCharToMultiByte( CP_UTF8, 0, wstr, (int)len, str, sizeof(str) - 1, NULL, NULL );
+    if ( ret <= 0 )
+    {
+        str[0] = '\0';
+        return str;
+    }
+
+    str[ret] = '\0';
+    return str;
+}
+#endif
+
 #ifdef __cplusplus
 } // extern "C"
 
@@ -152,7 +185,7 @@ struct Exception final : std::runtime_error
 
     explicit Exception( HRESULT s, const std::string &message ): std::runtime_error( "Unhandled Exception: " + std::to_string(s) + " with message " + message ), status(s), msg(message)
     {
-        ERR( "Exception %d within C++ code with message %s.\n", status, message.c_str() );
+        ERR( "Exception %#lx within C++ code with message \"%s\".\n", status, message.c_str() );
     }
 };
 

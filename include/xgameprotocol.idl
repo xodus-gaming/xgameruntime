@@ -44,4 +44,7 @@ coclass XGameProtocolImpl
     [default] interface IXGameProtocolImpl;
 }
 
+HRESULT __stdcall XGameProtocolRegisterForActivation( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XGameProtocolActivationCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XGameProtocolUnregisterForActivation( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+
 cpp_quote("#endif")

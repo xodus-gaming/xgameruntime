@@ -1,0 +1,158 @@
+/*
+ * xgameruntime.dll implementation
+ *
+ * Written by Weather
+ * Copyright 2026 Olivia Ryan
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+ */
+
+#pragma makedep header
+
+#ifdef __WIDL__
+#pragma winrt ns_prefix
+#endif
+
+import "propidl.idl";
+import "inspectable.idl";
+import "asyncinfo.idl";
+import "eventtoken.idl";
+import "windowscontracts.idl";
+import "windows.foundation.idl";
+import "windows.foundation.collections.idl";
+import "windows.storage.streams.idl";
+import "windows.system.idl";
+
+import "async.idl";
+
+// --- xgameruntime --- //
+
+namespace Xodus
+{
+    typedef struct TitleMgtSignaturePolicy TitleMgtSignaturePolicy;
+
+    typedef enum MagicHeaderType MagicHeaderType;
+
+    interface IIPCLayer;
+    interface IXodusService;
+    interface IXodusIPCPacket;
+    interface IXodusXMLBuilder;
+    interface IMsaTokenResponse;
+
+    runtimeclass IPCLayer;
+    runtimeclass XodusXMLBuilder;
+    runtimeclass XodusService;
+
+    struct TitleMgtSignaturePolicy
+    {
+        Windows.Foundation.Collections.IVectorView<HSTRING> *SupportedAlgorithms;
+        UINT64 MaxBodyBytes;
+        Windows.Foundation.Collections.IVectorView<HSTRING> *SupportedSignatureTypes;
+    };
+
+    declare
+    {
+        interface XGameRuntime.IXAsync<Xodus.IMsaTokenResponse *>;
+        interface XGameRuntime.IXAsync<Xodus.IXodusIPCPacket *>;
+        interface XGameRuntime.IXAsync<IUnknown *>;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0)
+    ]
+    enum MagicHeaderType
+    {
+        XML = 0x58445358,
+        Proto = 0x58445350,
+    };
+
+    [
+        uuid(e5670e5d-a32e-47e0-91c6-12163115072b)
+    ]
+    delegate HRESULT IPCResponseHandler( IXodusIPCPacket *reponse );
+
+    [
+        uuid(fb150d06-cbf2-4a66-9401-57bcbef19068)
+    ]
+    interface IXodusIPCPacket : IUnknown
+    {
+        [propget] HRESULT Magic( [out, retval] MagicHeaderType *out );
+        [propget] HRESULT MessageType( [out, retval] UINT16 *out );
+        [propget] HRESULT Message( [out, retval] Windows.Storage.Streams.IBuffer **out );
+    }
+
+    [
+        uuid(f7904b4d-4738-4485-a517-b37405aa5b91)
+    ]
+    interface IIPCLayer : IInspectable
+    {
+        HRESULT InitializeSocket();
+        HRESULT SendRequestAsync( [in] Xodus.IXodusIPCPacket *packet, [out, retval] XGameRuntime.IXAsync<Xodus.IXodusIPCPacket *> **operation );
+        [eventadd] HRESULT ResponseReceived( [in] Xodus.IPCResponseHandler *handler, [out, retval] EventRegistrationToken *token );
+        [eventremove] HRESULT ResponseReceived( [in] EventRegistrationToken token );
+    }
+
+    [
+        uuid(852d70bb-c6de-447a-8082-61646691295e)
+    ]
+    interface IXodusService : IInspectable
+    {
+        HRESULT Ping( [out, retval] XGameRuntime.IXAsync<IUnknown *> **operation );
+        HRESULT MsaTokenRequest( [in] HSTRING clientId, [in] boolean allowUI, [in] boolean fullTrust, [out, retval] XGameRuntime.IXAsync<Xodus.IMsaTokenResponse *> **operation );
+    }
+
+    [
+        uuid(7f70954e-1d3b-4d44-ab18-e43add94657c)
+    ]
+    interface IXodusXMLBuilder : IInspectable
+    {
+        HRESULT BuildMsaTokenRequestXml( [in] HSTRING clientId, [in] boolean allowUI, [in] boolean fullTrust, [out, retval] LPSTR *xml_string );
+        HRESULT FromMsaTokenResponseXml( [in] LPCSTR xml_string, [out, retval] IMsaTokenResponse **response );
+    }
+
+
+    [
+        uuid(c25f9827-7718-48ea-aa4d-1567eba692d5)
+    ]
+    interface IMsaTokenResponse : IUnknown
+    {
+        [propget] HRESULT Token( [out, retval] HSTRING *out );
+        [propget] HRESULT Expiry( [out, retval] Windows.Foundation.DateTime *out );
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0)
+    ]
+    runtimeclass XodusService
+    {
+        [default] interface Xodus.IXodusService;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0)
+    ]
+    runtimeclass XodusXMLBuilder
+    {
+        [default] interface Xodus.IXodusXMLBuilder;
+    }
+
+    [
+        contract(Windows.Foundation.UniversalApiContract, 1.0)
+    ]
+    runtimeclass IPCLayer
+    {
+        [default] interface Xodus.IIPCLayer;
+    }
+}

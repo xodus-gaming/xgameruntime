@@ -794,8 +794,6 @@ HRESULT WINAPI XAsyncSchedule(
         RETURN_HR(E_UNEXPECTED);
     }
 
-    TRACE("state->queue here is %p\n", state->queue);
-
     RETURN_IF_FAILED(XTaskQueueSubmitDelayedCallback(
         state->queue,
         XTaskQueuePort::Work,
@@ -804,8 +802,6 @@ HRESULT WINAPI XAsyncSchedule(
         WorkerCallback));
 
     state.Detach();
-
-    TRACE("Before completion, queue here was %p\n", state->queue);
 
     return S_OK;
 }
@@ -904,7 +900,6 @@ HRESULT WINAPI XAsyncGetResult(
             }
 
             result = E_INVALIDARG;
-            TRACE(buf);
             assert(false);
             assert(sprintfResult > 0);
         }

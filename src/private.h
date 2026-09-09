@@ -22,9 +22,12 @@
 #define __XGAMERUNTIME_PRIVATE_H__
 
 #define COBJMACROS
-#include <private/logging.h>
+
+#include <winsock2.h>
 #include <windows.h>
 #include <minwindef.h>
+
+#include <private/logging.h>
 
 #ifdef __cplusplus
 // Bug: WinRT in C++ within Wine lacks proper C++ type handling
@@ -44,12 +47,15 @@
 
 #include <xgameerr.h>
 #include <xsystem.h>
+#include <xgameruntimeinit.h>
 #include <xgameruntimefeature.h>
 #include <xnetworking.h>
 #include <xuser.h>
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>
+
+#include <xodusprovider.h>
 
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
@@ -59,8 +65,22 @@
 #define WIDL_using_Windows_System_Profile
 #include "windows.system.profile.h"
 
+#define XODUS_SOCKET_SUFFIX "xodus.sock"
+#define POLL_BUFFER_SIZE 2048
+#define IPC_REQUEST_TIMEOUT_MS 5000
+
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
 extern IXThreadingImpl *x_threading_impl;
+
+#ifdef __cplusplus
+extern ABI::Xodus::IIPCLayer *xodus_ipclayer;
+extern ABI::Xodus::IXodusService *xodus_service;
+extern ABI::Xodus::IXodusXMLBuilder *xodus_xml_builder;
+#else
+extern IIPCLayer *xodus_ipclayer;
+extern IXodusService *xodus_service;
+extern IXodusXMLBuilder *xodus_xml_builder;
+#endif
 
 #endif

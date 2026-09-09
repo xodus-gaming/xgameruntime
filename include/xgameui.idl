@@ -297,4 +297,48 @@ coclass XGameUiImpl
     [default] interface IXGameUiImpl4;
 }
 
+HRESULT __stdcall XGameUiShowMessageDialogAsync( [in, out] XAsyncBlock *async, [in, string] const char *titleText, [in, string] const char *contentText, [in, optional, string] const char *firstButtonText, [in, optional, string] const char *secondButtonText, [in, optional, string] const char *thirdButtonText, [in] XGameUiMessageDialogButton defaultButton, [in] XGameUiMessageDialogButton cancelButton );
+HRESULT __stdcall XGameUiShowMessageDialogResult( [in, out] XAsyncBlock *async, [out] XGameUiMessageDialogButton *resultButton );
+HRESULT __stdcall XGameUiShowSendGameInviteAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in, string] const char *sessionConfigurationId, [in, string] const char *sessionTemplateName, [in, string] const char *sessionId, [in, optional, string] const char *invitationText, [in, optional, string] const char *customActivationContext );
+HRESULT __stdcall XGameUiShowSendGameInviteResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XGameUiShowPlayerProfileCardAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in] UINT64 targetPlayer );
+HRESULT __stdcall XGameUiShowPlayerProfileCardResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XGameUiShowAchievementsAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in] UINT32 titleId );
+HRESULT __stdcall XGameUiShowAchievementsResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XGameUiShowPlayerPickerAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in, string] const char *promptText, [in] UINT32 selectFromPlayersCount, [in, length_is(selectFromPlayersCount)] const UINT64 selectFromPlayers[*], [in] UINT32 preSelectedPlayersCount, [in, optional, length_is(preSelectedPlayersCount)] UINT64 preSelectedPlayers[*], [in] UINT32 minSelectionCount, [in] UINT32 maxSelectionCount );
+HRESULT __stdcall XGameUiShowPlayerPickerResultCount( [in, out] XAsyncBlock *async, [out] UINT32 *resultPlayersCount );
+HRESULT __stdcall XGameUiShowPlayerPickerResult( [in, out] XAsyncBlock *async, [in] UINT32 resultPlayersCount, [out, length_is(resultPlayersCount)] UINT64 resultPlayers[*], [out, optional] UINT32 *resultPlayersUsed );
+HRESULT __stdcall XGameUiShowErrorDialogAsync( [in, out] XAsyncBlock *async, [in] HRESULT errorCode, [in, optional, string] const char *context );
+HRESULT __stdcall XGameUiShowErrorDialogResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XGameUiSetNotificationPositionHint( [in] XGameUiNotificationPositionHint position );
+HRESULT __stdcall XGameUiShowTextEntryAsync( [in, out] XAsyncBlock *async, [in, optional, string] const char *titleText, [in, optional, string] const char *descriptionText, [in, optional, string] const char *defaultText, [in] XGameUiTextEntryInputScope inputScope, [in] UINT32 maxTextLength );
+HRESULT __stdcall XGameUiShowTextEntryResultSize( [in, out] XAsyncBlock *async, [out] UINT32 *resultTextBufferSize );
+HRESULT __stdcall XGameUiShowTextEntryResult( [in, out] XAsyncBlock *async, [in] UINT32 resultTextBufferSize, [out, size_is(resultTextBufferSize)] char *resultTextBuffer, [out, optional] UINT32 *resultTextBufferUsed );
+HRESULT __stdcall XGameUiShowWebAuthenticationAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in, string] const char *requestUri, [in, string] const char *completionUri );
+HRESULT __stdcall XGameUiShowWebAuthenticationResultSize( [in, out] XAsyncBlock *async, [out] SIZE_T *bufferSize );
+HRESULT __stdcall XGameUiShowWebAuthenticationResult( [in, out] XAsyncBlock *async, [in] SIZE_T bufferSize, [out, size_is(bufferSize)] void *buffer, [out, ptr] XGameUiWebAuthenticationResultData **ptrToBuffer, [out, optional] SIZE_T *bufferUsed );
+HRESULT __stdcall XGameUiShowWebAuthenticationWithOptionsAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in, string] const char *requestUri, [in, string] const char *completionUri, [in] XGameUiWebAuthenticationOptions options );
+
+HRESULT __stdcall XGameUiShowMultiplayerActivityGameInviteAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser );
+HRESULT __stdcall XGameUiShowMultiplayerActivityGameInviteResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XGameUiTextEntryOpen( [in] const XGameUiTextEntryOptions *options, [in] UINT32 maxLength, [in, optional, string] const char *initialText, [in] UINT32 initialCursorIndex, [out] XGameUiTextEntryHandle *handle );
+HRESULT __stdcall XGameUiTextEntryClose( [in] XGameUiTextEntryHandle handle );
+HRESULT __stdcall XGameUiTextEntryGetState( [in] XGameUiTextEntryHandle handle, [out] XGameUiTextEntryChangeTypeFlags *changeType, [out, optional] UINT32 *cursorIndex, [out, optional] UINT32 *imeClauseStartIndex, [out, optional] UINT32 *imeClauseEndIndex, [in] UINT32 bufferSize, [out, size_is(bufferSize)] char *buffer );
+HRESULT __stdcall XGameUiTextEntryGetExtents( [in] XGameUiTextEntryHandle handle, [out] XGameUiTextEntryExtents *extents );
+HRESULT __stdcall XGameUiTextEntryUpdatePositionHint( [in] XGameUiTextEntryHandle handle, [in] XGameUiTextEntryPositionHint positionHint );
+HRESULT __stdcall XGameUiTextEntryUpdateVisibility( [in] XGameUiTextEntryHandle handle, [in] XGameUiTextEntryVisibilityFlags visibilityFlags );
+
+HRESULT __stdcall XGameUiShowStateShareAsync( [in, out] XAsyncBlock *async, [in] XUserHandle requestingUser, [in, string] const char *linkToken );
+HRESULT __stdcall XGameUiShowStateShareResult( [in, out] XAsyncBlock *async );
+
+HRESULT __stdcall XGameUiSetUiCallbacks( [in] const XGameUiUiCallbacks *callbacks, [in] BOOLEAN useSystemUiIfAvailable );
+HRESULT __stdcall XGameUiSetMessageDialogUiResponse( [in] XGameUiCallbackHandle callbackHandle, [in] XGameUiMessageDialogButton response );
+HRESULT __stdcall XGameUiSetPlayerPickerUiResponse( [in] XGameUiCallbackHandle callbackHandle, [in] UINT32 playerCount, [in, length_is(playerCount)] const UINT64 players[*] );
+HRESULT __stdcall XGameUiSetTextEntryUiResponse( [in] XGameUiCallbackHandle callbackHandle, [in, string] const char *response );
+HRESULT __stdcall XGameUiSetPlayerProfileCardUiResponse( [in] XGameUiCallbackHandle callbackHandle );
+HRESULT __stdcall XGameUiSetSendGameInviteUiResponse( [in] XGameUiCallbackHandle callbackHandle );
+HRESULT __stdcall XGameUiSetAchievementsUiResponse( [in] XGameUiCallbackHandle callbackHandle );
+HRESULT __stdcall XGameUiSetMultiplayerActivityGameInviteUiResponse( [in] XGameUiCallbackHandle callbackHandle );
+HRESULT __stdcall XGameUiSetErrorDialogUiResponse( [in] XGameUiCallbackHandle callbackHandle );
+
 cpp_quote("#endif")
