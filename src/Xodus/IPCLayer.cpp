@@ -257,7 +257,7 @@ private:
                 break;
 
             case RunningOS::OS_Other:
-                throw new Exception( E_NOTIMPL, "OS or compatibility layer is not supported!" );
+                throw Exception( E_NOTIMPL, "OS or compatibility layer is not supported!" );
         }
 
         WSAStartup( MAKEWORD( 2, 2 ), &wsa );
