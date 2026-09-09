@@ -239,14 +239,14 @@ private:
         {
             case RunningOS::OS_Linux:
                 if ( FAILED( xgameruntime_get_env( "XDG_RUNTIME_DIR", runtime, sizeof( runtime ) ) ) )
-                    throw new Exception( E_NOT_VALID_STATE, "Detected running under Wine on Linux, but XDG_RUNTIME_DIR was not defined!" );
+                    throw Exception( E_NOT_VALID_STATE, "Detected running under Wine on Linux, but XDG_RUNTIME_DIR was not defined!" );
                 normalized = NormalizeUnixPathToWine( runtime );
                 lstrcpyA( runtime, normalized );
                 CoTaskMemFree( normalized );
                 break;
 
             case RunningOS::OS_Windows:
-                throw new Exception( E_NOTIMPL, "Windows support is not implemented!" );
+                throw Exception( E_NOTIMPL, "Windows support is not implemented!" );
                 break;
 
             case RunningOS::OS_Darwin:
@@ -257,7 +257,7 @@ private:
                 break;
 
             case RunningOS::OS_Other:
-                throw new Exception( E_NOTIMPL, "OS or compatibility layer is not supported!" );
+                throw Exception( E_NOTIMPL, "OS or compatibility layer is not supported!" );
         }
 
         WSAStartup( MAKEWORD( 2, 2 ), &wsa );
