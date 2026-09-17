@@ -66,4 +66,7 @@ coclass XErrorImpl
     [default] interface IXErrorImpl;
 }
 
+void __stdcall XErrorSetCallback( [in] XErrorCallback *callback, [in] void *context );
+void __stdcall XErrorSetOptions( XErrorOptions optionsDebuggerPresent, XErrorOptions optionsDebuggerNotPresent );
+
 cpp_quote("#endif")

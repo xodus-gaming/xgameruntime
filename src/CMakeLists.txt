@@ -1,45 +1,4 @@
 # ------------------------------------------------------------
-# IDL generation
-# ------------------------------------------------------------
-
-file(GLOB_RECURSE IDL_FILES
-        CONFIGURE_DEPENDS
-        ${IDL_SOURCE_DIR}/*.idl )
-
-set(IDL_GENERATED_FILES)
-
-foreach(IDL_FILE ${IDL_FILES})
-    get_filename_component(IDL_NAME
-            ${IDL_FILE}
-            NAME_WE )
-
-    set(GENERATED_H
-            ${IDL_BINARY_DIR}/${IDL_NAME}.h )
-
-    add_custom_command(
-            OUTPUT
-            ${GENERATED_H}
-
-            COMMAND
-            ${CMAKE_COMMAND} -E make_directory
-            ${IDL_BINARY_DIR}
-
-            COMMAND
-            ${WIDL}
-            -h
-            -o ${GENERATED_H}
-            ${IDL_FILE}
-
-            DEPENDS
-            ${IDL_FILE}
-
-            VERBATIM )
-
-    list(APPEND IDL_GENERATED_FILES
-            ${GENERATED_H} )
-endforeach()
-
-# ------------------------------------------------------------
 # xgameruntime
 # ------------------------------------------------------------
 
@@ -48,12 +7,22 @@ add_library(xgameruntime SHARED
         xgameruntime.def
         ${IDL_GENERATED_FILES} )
 
+add_dependencies(xgameruntime
+        xgameruntime-idl )
+
+# Xodus
+target_sources(xgameruntime PRIVATE
+        Xodus/Structs.cpp
+        Xodus/IPCLayer.cpp
+        Xodus/XodusService.cpp
+        Xodus/XodusXMLBuilder.cpp )
+
 # System
-target_sources( xgameruntime PRIVATE
+target_sources(xgameruntime PRIVATE
         System/XThreading.cpp )
 
 # System/Threading (based on libHttpClient)
-target_sources( xgameruntime PRIVATE
+target_sources(xgameruntime PRIVATE
         System/Threading/ThreadPool.cpp
         System/Threading/WaitTimer.cpp
         System/Threading/XAsync.cpp
@@ -65,10 +34,13 @@ if(WIN32)
 endif()
 
 set_target_properties(xgameruntime PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}" )
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin" )
 
-target_link_libraries( xgameruntime PRIVATE
-        xgameruntime-common )
+target_link_libraries(xgameruntime PRIVATE
+        xgameruntime-common
+        runtimeobject
+        ws2_32
+        LibXml2 )
 
 target_link_options(xgameruntime PRIVATE
         -static

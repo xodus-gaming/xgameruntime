@@ -25,6 +25,7 @@
 extern "C" {
 #endif
 
+static volatile BOOL socketInitialized = FALSE;
 static volatile LONG loggerInitialized = FALSE;
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
@@ -54,9 +55,20 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
     return TRUE;
 }
 
-HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const struct initialize_options *options )
+HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options )
 {
+    HRESULT status = S_OK;
+
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
+
+    if ( !socketInitialized )
+    {
+        if ( SUCCEEDED( status = xodus_ipclayer->InitializeSocket() ) )
+            socketInitialized = TRUE;
+        else
+            throw Exception( status, "ABI::Xodus::IIPCLayer->InitializeSocket() failed" );
+    }
+
     return S_OK;
 }
 
@@ -104,7 +116,7 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     }
 
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
-    return HRESULT_FROM_WIN32( ERROR_NOT_SUPPORTED );
+    return E_NOINTERFACE;
 }
 
 HRESULT WINAPI UninitializeApiImpl()

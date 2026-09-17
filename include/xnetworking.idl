@@ -198,4 +198,24 @@ coclass XNetworkingImpl
     [default] interface IXNetworkingImpl2;
 }
 
+HRESULT __stdcall XNetworkingQueryPreferredLocalUdpMultiplayerPort( [out] UINT16 *preferredLocalUdpMultiplayerPort );
+HRESULT __stdcall XNetworkingQueryPreferredLocalUdpMultiplayerPortAsync( [in, out] XAsyncBlock *asyncBlock );
+HRESULT __stdcall XNetworkingQueryPreferredLocalUdpMultiplayerPortAsyncResult( [in, out] XAsyncBlock *asyncBlock, [out] UINT16 *preferredLocalUdpMultiplayerPort );
+HRESULT __stdcall XNetworkingRegisterPreferredLocalUdpMultiplayerPortChanged( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XNetworkingPreferredLocalUdpMultiplayerPortChangedCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XNetworkingUnregisterPreferredLocalUdpMultiplayerPortChanged( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XNetworkingQuerySecurityInformationForUrlAsync( [in, string] const char *url, [in, out] XAsyncBlock *asyncBlock );
+HRESULT __stdcall XNetworkingQuerySecurityInformationForUrlAsyncResultSize( [in, out] XAsyncBlock *asyncBlock, [out] SIZE_T *securityInformationBufferByteCount );
+HRESULT __stdcall XNetworkingQuerySecurityInformationForUrlAsyncResult( [in, out] XAsyncBlock *asyncBlock, [in] SIZE_T securityInformationBufferByteCount, [out, optional] SIZE_T *securityInformationBufferByteCountUsed, [out] UINT8 *securityInformationBuffer, [out, ptr] XNetworkingSecurityInformation **securityInformation );
+HRESULT __stdcall XNetworkingQuerySecurityInformationForUrlUtf16Async( [in, string] const WCHAR *url, [in, out] XAsyncBlock *asyncBlock );
+HRESULT __stdcall XNetworkingQuerySecurityInformationForUrlUtf16AsyncResultSize( [in, out] XAsyncBlock *asyncBlock, [out] SIZE_T *securityInformationBufferByteCount );
+HRESULT __stdcall XNetworkingQuerySecurityInformationForUrlUtf16AsyncResult( [in, out] XAsyncBlock *asyncBlock, [in] SIZE_T securityInformationBufferByteCount, [out, optional] SIZE_T *securityInformationBufferByteCountUsed, [out] UINT8 *securityInformationBuffer, [out, ptr] XNetworkingSecurityInformation **securityInformation );
+HRESULT __stdcall XNetworkingVerifyServerCertificate( [in] void *requestHandle, [in] const XNetworkingSecurityInformation *securityInformation );
+HRESULT __stdcall XNetworkingGetConnectivityHint( [out] XNetworkingConnectivityHint *connectivityHint );
+HRESULT __stdcall XNetworkingRegisterConnectivityHintChanged( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XNetworkingConnectivityHintChangedCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XNetworkingUnregisterConnectivityHintChanged( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+
+HRESULT __stdcall XNetworkingQueryConfigurationSetting( [in] XNetworkingConfigurationSetting configurationSetting, [out] UINT64 *value );
+HRESULT __stdcall XNetworkingSetConfigurationSetting( [in] XNetworkingConfigurationSetting configurationParameter, [in] UINT64 value );
+HRESULT __stdcall XNetworkingQueryStatistics( [in] XNetworkingStatisticsType statisticsType, [out] XNetworkingStatisticsBuffer *statisticsBuffer );
+
 cpp_quote("#endif")

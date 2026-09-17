@@ -7,6 +7,15 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/windows-x64",
             "toolchainFile": "${sourceDir}/win64-target.cmake"
+        },
+        {
+            "name": "win64-tests",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/windows-x64",
+            "toolchainFile": "${sourceDir}/win64-target.cmake",
+            "cacheVariables": {
+                "ENABLE_TESTS": "ON"
+            }
         }
     ]
 }

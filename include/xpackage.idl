@@ -243,4 +243,42 @@ coclass XPackageImpl
     [default] interface IXPackageImpl4;
 }
 
+HRESULT __stdcall XPackageGetCurrentProcessPackageIdentifier( [in] SIZE_T bufferSize, [out, size_is(bufferSize)] char *buffer );
+BOOLEAN __stdcall XPackageIsPackagedProcess();
+HRESULT __stdcall XPackageCreateInstallationMonitor( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, optional, length_is(selectorCount)] XPackageChunkSelector selectors[*], [in] UINT32 minimumUpdateIntervalMs, [in, optional] XTaskQueueHandle queue, [out] XPackageInstallationMonitorHandle *installationMonitor );
+void __stdcall XPackageCloseInstallationMonitorHandle( [in] XPackageInstallationMonitorHandle installationMonitor );
+void __stdcall XPackageGetInstallationProgress( [in] XPackageInstallationMonitorHandle installationMonitor, [out] XPackageInstallationProgress *progress );
+BOOLEAN __stdcall XPackageUpdateInstallationMonitor( [in] XPackageInstallationMonitorHandle installationMonitor );
+HRESULT __stdcall XPackageRegisterInstallationProgressChanged( [in] XPackageInstallationMonitorHandle installationMonitor, [in, optional] void *context, [in] XPackageInstallationProgressCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XPackageUnregisterInstallationProgressChanged( [in] XPackageInstallationMonitorHandle installationMonitor, [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XPackageGetUserLocale( [in] SIZE_T localeSize, [out, size_is(localSize)] char *locale );
+HRESULT __stdcall XPackageFindChunkAvailability( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, optional, length_is(selectorCount)] XPackageChunkSelector selectors[*], [out] XPackageChunkAvailability *availability );
+HRESULT __stdcall XPackageEnumerateChunkAvailability( [in, string] const char *packageIdentifier, [in] XPackageChunkSelectorType type, [in] void *context, [in] XPackageChunkAvailabilityCallback *callback );
+HRESULT __stdcall XPackageChangeChunkInstallOrder( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, length_is(selectorCount)] XPackageChunkSelector selectors[*] );
+HRESULT __stdcall XPackageInstallChunks( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, size_is(selectorCount)] XPackageChunkSelector *selectors, [in] UINT32 minimumUpdateIntervalMs, [in] BOOLEAN suppressUserConfirmation, [in, optional] XTaskQueueHandle queue, [out] XPackageInstallationMonitorHandle *installationMonitor );
+HRESULT __stdcall XPackageInstallChunksAsync( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, length_is(selectorCount)] XPackageChunkSelector selectors[*], [in] UINT32 minimumUpdateIntervalMs, [in] BOOLEAN suppressUserConfirmation, [in, out] XAsyncBlock *asyncBlock );
+HRESULT __stdcall XPackageInstallChunksResult( [in, out] XAsyncBlock *asyncBlock, [out] XPackageInstallationMonitorHandle *installationMonitor );
+HRESULT __stdcall XPackageEstimateDownloadSize( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, length_is(selectorCount)] XPackageChunkSelector selectors[*], [out] UINT64 *downloadSize, [out, optional] BOOLEAN *shouldPresentUserConfirmation );
+HRESULT __stdcall XPackageUninstallChunks( [in, string] const char *packageIdentifier, [in] UINT32 selectorCount, [in, length_is(selectorCount)] XPackageChunkSelector selectors[*] );
+BOOLEAN __stdcall XPackageUnregisterPackageInstalled( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XPackageGetMountPathSize( [in] XPackageMountHandle mount, [out] SIZE_T *pathSize );
+HRESULT __stdcall XPackageGetMountPath( [in] XPackageMountHandle mount, [in] SIZE_T pathSize, [out, size_is(pathSize)] char *path );
+void __stdcall XPackageCloseMountHandle( [in] XPackageMountHandle mount );
+HRESULT __stdcall XPackageEnumeratePackages( [in] XPackageKind kind, [in] XPackageEnumerationScope scope, [in, optional] void *context, [in] XPackageEnumerationCallback *callback );
+HRESULT __stdcall XPackageRegisterPackageInstalled( [in] XTaskQueueHandle queue, [in, optional] void *context, [in] XPackageInstalledCallback *callback, [out] XTaskQueueRegistrationToken *token );
+HRESULT __stdcall XPackageGetWriteStats( [out] XPackageWriteStats *writeStats );
+HRESULT __stdcall XPackageUninstallUWPInstance( [in, string] const char *packageName );
+HRESULT __stdcall XPackageEnumerateFeatures( [in, string] const char *packageIdentifier, [in, optional] void *context, [in] XPackageFeatureEnumerationCallback *callback );
+BOOLEAN __stdcall XPackageUninstallPackage( [in, string] const char *packageIdentifier );
+
+HRESULT __stdcall XPackageEnumeratePackages( [in] XPackageKind kind, [in] XPackageEnumerationScope scope, [in, optional] void *context, [in] XPackageEnumerationCallback *callback );
+HRESULT __stdcall XPackageRegisterPackageInstalled( [in] XTaskQueueHandle queue, [in, optional] void *context, [in] XPackageInstalledCallback *callback, [out] XTaskQueueRegistrationToken *token );
+HRESULT __stdcall XPackageMountWithUiAsync( [in, string] const char *packageIdentifier, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XPackageMountWithUiResult( [in, out] XAsyncBlock *async, [out] XPackageMountHandle *mount );
+
+HRESULT __stdcall XPackageEnumeratePackages( [in] XPackageKind kind, [in] XPackageEnumerationScope scope, [in, optional] void *context, [in] XPackageEnumerationCallback *callback );
+HRESULT __stdcall XPackageRegisterPackageInstalled( [in] XTaskQueueHandle queue, [in, optional] void *context, [in] XPackageInstalledCallback *callback, [out] XTaskQueueRegistrationToken *token );
+
+HRESULT __stdcall XPackageGetKind( [in, string] const char *packageIdentifier, [out] XPackageKind *kind );
+
 cpp_quote("#endif")

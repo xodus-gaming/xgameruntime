@@ -160,7 +160,6 @@ TaskQueuePortImpl::QueryInterface(
 
     if ( iid == __uuidof( IUnknown ) ||
          iid == __uuidof( IInspectable ) ||
-         iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueuePortImpl ) )
     {
         AddRef();
@@ -1229,7 +1228,6 @@ TaskQueueImpl::QueryInterface(
 
     if ( iid == __uuidof( IUnknown ) ||
          iid == __uuidof( IInspectable ) ||
-         iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueueImpl ) )
     {
         AddRef();
@@ -1543,7 +1541,6 @@ TaskQueuePortContextImpl::QueryInterface(
 
     if ( iid == __uuidof( IUnknown ) ||
          iid == __uuidof( IInspectable ) ||
-         iid == __uuidof( IAgileObject ) ||
          iid == __uuidof( TaskQueuePortContextImpl ) )
     {
         AddRef();
@@ -1844,6 +1841,25 @@ BOOLEAN XTaskQueueDispatch(
     }
 
     return portContext->GetPort()->Dispatch(portContext.get(), timeoutInMs);
+}
+
+BOOLEAN XTaskQueueIsEmpty(
+    XTaskQueueHandle queue,
+    XTaskQueuePort port
+) {
+    referenced_ptr<ITaskQueue> aq(GetQueue(queue));
+    if (aq == nullptr)
+    {
+        return false;
+    }
+
+    referenced_ptr<ITaskQueuePortContext> portContext;
+    if (FAILED(aq->GetPortContext(port, portContext.address_of())))
+    {
+        return false;
+    }
+
+    return portContext->GetPort()->IsEmpty();
 }
 
 void XTaskQueueCloseHandle(

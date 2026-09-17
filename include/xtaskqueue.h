@@ -74,6 +74,7 @@ HRESULT __stdcall XTaskQueueCreateComposite( XTaskQueuePortHandle workPort, XTas
 HRESULT __stdcall XTaskQueueGetPort( XTaskQueueHandle queue, XTaskQueuePort port, XTaskQueuePortHandle *portHandle );
 HRESULT __stdcall XTaskQueueDuplicateHandle( XTaskQueueHandle queueHandle, XTaskQueueHandle *duplicatedHandle );
 BOOLEAN __stdcall XTaskQueueDispatch( XTaskQueueHandle queue, XTaskQueuePort port, UINT32 timeoutInMs );
+BOOLEAN __stdcall XTaskQueueIsEmpty( XTaskQueueHandle queue, XTaskQueuePort port );
 void __stdcall XTaskQueueCloseHandle( XTaskQueueHandle queue );
 HRESULT __stdcall XTaskQueueTerminate( XTaskQueueHandle queue, BOOLEAN wait, void *callbackContext, XTaskQueueTerminatedCallback *callback );
 HRESULT __stdcall XTaskQueueSubmitCallback( XTaskQueueHandle queue, XTaskQueuePort port, void *callbackContext, XTaskQueueCallback *callback );

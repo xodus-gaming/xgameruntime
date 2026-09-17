@@ -80,4 +80,8 @@ coclass XGameActivationImpl
     [default] interface IXGameActivationImpl;
 }
 
+HRESULT __stdcall XGameActivationRegisterForEvent( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XGameActivationCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XGameActivationUnregisterForEvent( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XGameActivationAcceptPendingInvite( [in, string] const char *inviteUri );
+
 cpp_quote("#endif")

@@ -183,4 +183,24 @@ coclass XAccessibilityImpl
     [default] interface IXAccessibilityImpl2;
 }
 
+HRESULT __stdcall XClosedCaptionGetProperties( [out] XClosedCaptionProperties *props );
+HRESULT __stdcall XClosedCaptionSetEnabled( [in] BOOLEAN enabled );
+HRESULT __stdcall XHighContrastGetMode( [out] XHighContrastMode *mode );
+HRESULT __stdcall XSpeechToTextSetPositionHint( [in] XSpeechToTextPositionHint position );
+HRESULT __stdcall XSpeechToTextSendString( [in, string] const char *speakerName, [in, string] const char *content, [in] XSpeechToTextType type );
+HRESULT __stdcall XSpeechSynthesizerEnumerateInstalledVoices( [in, optional] void *context, [in] XSpeechSynthesizerInstalledVoicesCallback *callback );
+HRESULT __stdcall XSpeechSynthesizerCreate( [out] XSpeechSynthesizerHandle *speechSynthesizer );
+HRESULT __stdcall XSpeechSynthesizerCloseHandle( [in, optional] XSpeechSynthesizerHandle speechSynthesizer );
+HRESULT __stdcall XSpeechSynthesizerSetDefaultVoice( [in] XSpeechSynthesizerHandle speechSynthesizer );
+HRESULT __stdcall XSpeechSynthesizerSetCustomVoice( [in] XSpeechSynthesizerHandle speechSynthesizer, [in, string] const char *voiceId );
+HRESULT __stdcall XSpeechSynthesizerCreateStreamFromText( [in] XSpeechSynthesizerHandle speechSynthesizer, [in, string] const char *text, [out] XSpeechSynthesizerStreamHandle *speechSynthesisStream );
+HRESULT __stdcall XSpeechSynthesizerCloseStreamHandle( [in] XSpeechSynthesizerStreamHandle speechSynthesisStream );
+HRESULT __stdcall XSpeechSynthesizerGetStreamDataSize( [in] XSpeechSynthesizerStreamHandle speechSynthesisStream, [out] SIZE_T *bufferSize );
+HRESULT __stdcall XSpeechSynthesizerGetStreamData( [in] XSpeechSynthesizerStreamHandle speechSynthesisStream, [in] SIZE_T bufferSize, [out, size_is(bufferSize)] void *buffer, [out, optional] SIZE_T *bufferUsed );
+HRESULT __stdcall XSpeechToTextBeginHypothesisString( [in, string] const char *speakerName, [in, string] const char *content, [in] XSpeechToTextType type, [out] UINT32 *hypothesisId );
+HRESULT __stdcall XSpeechToTextUpdateHypothesisString( [in] UINT32 hypothesisId, [in, string] const char *content );
+HRESULT __stdcall XSpeechToTextFinalizeHypothesisString( [in] UINT32 hypothesisId, [in, string] const char *content );
+HRESULT __stdcall XSpeechToTextCancelHypothesisString( [in] UINT32 hypothesisId );
+HRESULT __stdcall XSpeechSynthesizerCreateStreamFromSsml( [in] XSpeechSynthesizerHandle speechSynthesizer, [in, string] const char *ssml, [out] XSpeechSynthesizerStreamHandle *speechSynthesisStream );
+
 cpp_quote("#endif")

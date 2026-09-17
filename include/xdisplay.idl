@@ -105,4 +105,10 @@ coclass XLauncherImpl
     [default] interface IXLauncherImpl;
 }
 
+XDisplayHdrModeResult __stdcall XDisplayTryEnableHdrMode( [in] XDisplayHdrModePreference displayModePreference, [out, optional] XDisplayHdrModeInfo *displayHdrModeInfo );
+
+HRESULT __stdcall XLaunchUri( [in, optional] XUserHandle user, [in, string] const char *uri );
+HRESULT __stdcall XDisplayAcquireTimeoutDeferral( [out] XDisplayTimeoutDeferralHandle *handle );
+void __stdcall XDisplayCloseTimeoutDeferralHandle( [in] XDisplayTimeoutDeferralHandle handle );
+
 cpp_quote("#endif")

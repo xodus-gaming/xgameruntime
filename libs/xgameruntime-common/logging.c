@@ -336,7 +336,7 @@ InitializeLogging()
 
     if ( SUCCEEDED( xgameruntime_get_env( "XGAMERUNTIME_LOG_FILE", env_buffer, sizeof( env_buffer ) ) ) )
     {
-        logFile = CreateFileA( env_buffer, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+        logFile = CreateFileA( env_buffer, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
     }
 
     if ( logFile == INVALID_HANDLE_VALUE || logFile == NULL )
