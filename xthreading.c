@@ -70,14 +70,16 @@ static ULONG WINAPI x_threading_Release( IXThreadingImpl *iface )
 
 static HRESULT WINAPI x_threading_XAsyncGetStatus( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, BOOLEAN wait )
 {
-    FIXME( "iface %p, asyncBlock %p, wait %d stub!\n", iface, asyncBlock, wait );
-    return E_NOTIMPL;
+    TRACE( "iface %p, asyncBlock %p, wait %d.\n", iface, asyncBlock, wait );
+    if (WaitForSingleObject( asyncBlock->internal[3], wait ? INFINITE : 0 ) == WAIT_TIMEOUT) return E_PENDING;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_threading_XAsyncGetResultSize( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, SIZE_T *bufferSize )
 {
-    FIXME( "iface %p, asyncBlock %p, bufferSize %p stub!\n", iface, asyncBlock, bufferSize );
-    return E_NOTIMPL;
+    TRACE( "iface %p, asyncBlock %p, bufferSize %p.\n", iface, asyncBlock, bufferSize );
+    *bufferSize = ((XAsyncProviderData *)asyncBlock->internal[0])->bufferSize;
+    return S_OK;
 }
 
 static void WINAPI x_threading_XAsyncCancel( IXThreadingImpl *iface, XAsyncBlock *asyncBlock )
@@ -85,16 +87,51 @@ static void WINAPI x_threading_XAsyncCancel( IXThreadingImpl *iface, XAsyncBlock
     FIXME( "iface %p, asyncBlock %p stub!\n", iface, asyncBlock );
 }
 
+static HRESULT WINAPI run_provider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    HRESULT hr = S_OK;
+    switch (op)
+    {
+        case XAsyncOp_Begin:
+            return IXThreadingImpl_XAsyncSchedule( x_threading_impl, data->async, 0 );
+        case XAsyncOp_DoWork:
+            hr = ((XAsyncWork *)data->context)( data->async );
+            IXThreadingImpl_XAsyncComplete( x_threading_impl, data->async, hr, 0 );
+            hr = S_OK;
+        case XAsyncOp_GetResult:
+        case XAsyncOp_Cancel:
+        case XAsyncOp_Cleanup:
+            break;
+    }
+    return hr;
+}
+
 static HRESULT WINAPI x_threading_XAsyncRun( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, XAsyncWork *work )
 {
-    FIXME( "iface %p, asyncBlock %p, work %p stub!\n", iface, asyncBlock, work );
-    return E_NOTIMPL;
+    TRACE( "iface %p, asyncBlock %p, work %p.\n", iface, asyncBlock, work );
+    return IXThreadingImpl_XAsyncBegin( iface, asyncBlock, work, NULL, "XAsyncRun", run_provider );
 }
 
 static HRESULT WINAPI x_threading_XAsyncBegin( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, void *context, const void *identity, const char *identityName, XAsyncProvider *provider )
 {
-    FIXME( "iface %p, asyncBlock %p, context %p, identity %p, identityName %s, provider %p stub!\n", iface, asyncBlock, context, identity, identityName, provider );
-    return E_NOTIMPL;
+    XAsyncProviderData *data;
+    HRESULT hr;
+
+    TRACE( "iface %p, asyncBlock %p, context %p, identity %p, identityName %s, provider %p.\n", iface, asyncBlock, context, identity, identityName, provider );
+
+    if (!(data = calloc( 1, sizeof(*data) ))) return E_OUTOFMEMORY;
+    if (!asyncBlock->queue && FAILED(hr = IXThreadingImpl_XTaskQueueGetCurrentProcessTaskQueue( iface, &asyncBlock->queue )))
+    {
+        free( data );
+        return hr;
+    }
+    asyncBlock->internal[0] = data;
+    asyncBlock->internal[1] = provider;
+    asyncBlock->internal[2] = (void *)identity;
+    asyncBlock->internal[3] = CreateEventA( NULL, TRUE, FALSE, NULL );
+    data->async = asyncBlock;
+    data->context = context;
+    return provider( XAsyncOp_Begin, data );
 }
 
 static HRESULT WINAPI __PADDING__( IXThreadingImpl *iface )
@@ -103,21 +140,49 @@ static HRESULT WINAPI __PADDING__( IXThreadingImpl *iface )
     return E_NOTIMPL;
 }
 
+static void CALLBACK async_work_callback( XAsyncBlock *asyncBlock, BOOLEAN canceled )
+{
+    ((XAsyncProvider *)asyncBlock->internal[1])( canceled ? XAsyncOp_Cancel : XAsyncOp_DoWork, asyncBlock->internal[0] );
+}
+
 static HRESULT WINAPI x_threading_XAsyncSchedule( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, UINT32 delayInMs )
 {
-    FIXME( "iface %p, asyncBlock %p, delayInMs %d stub!\n", iface, asyncBlock, delayInMs );
-    return E_NOTIMPL;
+    TRACE( "iface %p, asyncBlock %p, delayInMs %d.\n", iface, asyncBlock, delayInMs );
+    return IXThreadingImpl_XTaskQueueSubmitDelayedCallback( iface, asyncBlock->queue, XTaskQueuePort_Work, delayInMs, asyncBlock, (XTaskQueueCallback *)async_work_callback );
+}
+
+static void CALLBACK async_completion_callback( XAsyncBlock *asyncBlock, BOOLEAN canceled )
+{
+    if (canceled) ((XAsyncProvider *)asyncBlock->internal[1])( XAsyncOp_Cancel, asyncBlock->internal[0] );
+    else asyncBlock->callback( asyncBlock );
+    ((XAsyncProvider *)asyncBlock->internal[1])( XAsyncOp_Cleanup, asyncBlock->internal[0] );
+    SetEvent( asyncBlock->internal[3] );
 }
 
 static void WINAPI x_threading_XAsyncComplete( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, HRESULT result, SIZE_T requiredBufferSize )
 {
-    FIXME( "iface %p, asyncBlock %p, result %#lx, requiredBufferSize %Iu stub!\n", iface, asyncBlock, result, requiredBufferSize );
+    TRACE( "iface %p, asyncBlock %p, result %#lx, requiredBufferSize %Iu.\n", iface, asyncBlock, result, requiredBufferSize );
+    ((XAsyncProviderData *)asyncBlock->internal[0])->bufferSize = requiredBufferSize;
+    if (SUCCEEDED(result) && asyncBlock->callback)
+        IXThreadingImpl_XTaskQueueSubmitCallback( iface, asyncBlock->queue, XTaskQueuePort_Completion, asyncBlock, (XTaskQueueCallback *)async_completion_callback );
+    else
+    {
+        ((XAsyncProvider *)asyncBlock->internal[1])( XAsyncOp_Cleanup, asyncBlock->internal[0] );
+        SetEvent( asyncBlock->internal[3] );
+        free( asyncBlock->internal[0] );
+    }
 }
 
 static HRESULT WINAPI x_threading_XAsyncGetResult( IXThreadingImpl *iface, XAsyncBlock *asyncBlock, const void *identity, SIZE_T bufferSize, void *buffer, SIZE_T *bufferUsed )
 {
-    FIXME( "iface %p asyncBlock %p, identity %p, bufferSize %Iu, buffer %p, bufferUsed %p stub!\n", iface, asyncBlock, identity, bufferSize, buffer, bufferUsed );
-    return E_NOTIMPL;
+    HRESULT hr;
+    TRACE( "iface %p asyncBlock %p, identity %p, bufferSize %Iu, buffer %p, bufferUsed %p.\n", iface, asyncBlock, identity, bufferSize, buffer, bufferUsed );
+    if (bufferSize < ((XAsyncProviderData *)asyncBlock->internal[0])->bufferSize) return HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
+    ((XAsyncProviderData *)asyncBlock->internal[0])->buffer = buffer;
+    if (SUCCEEDED(hr = ((XAsyncProvider *)asyncBlock->internal[1])( XAsyncOp_GetResult, asyncBlock->internal[0] )))
+        *bufferUsed = ((XAsyncProviderData *)asyncBlock->internal[0])->bufferSize;
+    else *bufferUsed = 0;
+    return hr;
 }
 
 static HRESULT WINAPI x_threading_XTaskQueueCreate( IXThreadingImpl *iface, XTaskQueueDispatchMode workDispatchMode, XTaskQueueDispatchMode completionDispatchMode, XTaskQueueHandle *queue )
