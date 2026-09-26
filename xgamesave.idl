@@ -119,6 +119,15 @@ interface IXGameSaveImpl3 : IXGameSaveImpl2
 }
 
 [
+    local,
+    object,
+    uuid(ab4ae4fb-6508-4950-a032-45fd4bf8c43b)
+]
+interface IXGameSaveImpl4 : IXGameSaveImpl3
+{
+}
+
+[
     uuid(704c3f58-e629-4cc2-b197-30511b996fe2)
 ]
 coclass XGameSaveImpl
