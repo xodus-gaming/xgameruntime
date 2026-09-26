@@ -28,22 +28,31 @@ WINE_DEFAULT_DEBUG_CHANNEL(xgameruntime);
 char *msaAppId = NULL;
 BOOLEAN fullTrust = FALSE;
 BOOLEAN initializeCalled = FALSE;
+XTaskQueueHandle processQueue = NULL;
+CRITICAL_SECTION processQueueSection;
 DWORD tlsIndex;
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 {
+    XTaskQueueHandle queue;
+
     TRACE( "hinst %p, reason %lu, reserved %p.\n", hinst, reason, reserved );
 
     switch (reason)
     {
         case DLL_PROCESS_ATTACH:
             if ((tlsIndex = TlsAlloc()) == TLS_OUT_OF_INDEXES) return FALSE;
+            InitializeCriticalSection( &processQueueSection );
+            if (SUCCEEDED(IXThreadingImpl_XTaskQueueCreate( x_threading_impl, XTaskQueueDispatchMode_ThreadPool, XTaskQueueDispatchMode_ThreadPool, &queue )))
+                IXThreadingImpl_XTaskQueueSetCurrentProcessTaskQueue( x_threading_impl, queue );
         case DLL_THREAD_ATTACH:
             TlsSetValue( tlsIndex, FALSE );
             break;
         case DLL_PROCESS_DETACH:
             if (msaAppId) free( msaAppId );
             TlsFree( tlsIndex );
+            IXThreadingImpl_XTaskQueueSetCurrentProcessTaskQueue( x_threading_impl, NULL );
+            DeleteCriticalSection( &processQueueSection );
             break;
     }
     return TRUE;
