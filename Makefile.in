@@ -1,6 +1,6 @@
 MODULE    = xgameruntime.dll
 EXTRAINCL = $(XML2_PE_CFLAGS)
-IMPORTS   = bcrypt combase shlwapi winhttp wininet $(XML2_PE_LIBS)
+IMPORTS   = bcrypt combase shlwapi winhttp wininet ws2_32 $(XML2_PE_LIBS)
 
 SOURCES = \
 	main.c \

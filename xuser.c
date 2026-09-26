@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <winsock2.h>
+#include <afunix.h>
+#include <libxml/parser.h>
+#include <libxml/tree.h>
 #include "private.h"
 #include "userprovider.h"
 #include "util.h"
@@ -47,7 +51,7 @@ static HRESULT parse_json( const char *json, SIZE_T jsonLen, IJsonObject **objec
     if (!(wJsonLen = MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, json, jsonLen, NULL, 0 ))) return HRESULT_FROM_WIN32( GetLastError() );
     if (FAILED(hr = WindowsCreateStringReference( name, wcslen( name ), &header, &string ))) return hr;
     if (FAILED(hr = RoGetActivationFactory( string, &IID_IJsonValueStatics, (void **)&statics ))) return hr;
-    if (!(wJson = calloc( wJsonLen, sizeof(WCHAR) )))
+    if (!(wJson = calloc( wJsonLen + 1, sizeof(WCHAR) )))
     {
         IJsonValueStatics_Release( statics );
         return E_OUTOFMEMORY;
@@ -93,6 +97,10 @@ struct XUser
     BCRYPT_KEY_HANDLE key;
     char *proofKey;
     char *userToken;
+    char *deviceToken;
+    char *deviceAuth;
+    ULONGLONG deviceAuthTime;
+    CRITICAL_SECTION deviceAuthSection;
     UINT64 xuid;
     UINT32 policiesLen;
     UINT32 endpointsLen;
@@ -128,6 +136,8 @@ static ULONG WINAPI user_Release( IUser *iface )
         if (impl->key) BCryptDestroyKey( impl->key );
         if (impl->proofKey) free( impl->proofKey );
         if (impl->userToken) free( impl->userToken );
+        free( impl->deviceToken );
+        free( impl->deviceAuth );
         if (impl->policies) free( impl->policies );
         if (impl->endpoints) {
             for(UINT32 i = 0; i < impl->endpointsLen; i++) {
@@ -143,10 +153,188 @@ static ULONG WINAPI user_Release( IUser *iface )
     return ref;
 }
 
+extern char *msaAppId;
+extern BOOLEAN fullTrust;
+
+#define XODUS_XML_MAGIC 0x58445358
+#define XODUS_MSA_TOKEN_REQUEST 3
+
+static HRESULT xodus_socket_path( char *path, SIZE_T size )
+{
+    char unixPath[MAX_PATH];
+    WCHAR *dosPath;
+    DWORD len;
+
+    if (!(len = GetEnvironmentVariableA( "XODUS_SOCKET", unixPath, sizeof(unixPath) )) || len >= sizeof(unixPath))
+    {
+        if (!(len = GetEnvironmentVariableA( "WINE_HOST_XDG_RUNTIME_DIR", unixPath, sizeof(unixPath) )) || len >= sizeof(unixPath))
+            len = GetEnvironmentVariableA( "XDG_RUNTIME_DIR", unixPath, sizeof(unixPath) );
+        if (!len || len + strlen( "/xodus.sock" ) >= sizeof(unixPath)) return HRESULT_FROM_WIN32( ERROR_ENVVAR_NOT_FOUND );
+        strcat( unixPath, "/xodus.sock" );
+    }
+
+    TRACE( "socket %s.\n", debugstr_a( unixPath ) );
+
+    if (!(dosPath = wine_get_dos_file_name( unixPath ))) return HRESULT_FROM_WIN32( ERROR_PATH_NOT_FOUND );
+    len = WideCharToMultiByte( CP_ACP, 0, dosPath, -1, path, size, NULL, NULL );
+    HeapFree( GetProcessHeap(), 0, dosPath );
+    return len ? S_OK : HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER );
+}
+
+static BOOL xodus_send( SOCKET s, const char *data, int size )
+{
+    int sent;
+
+    while (size > 0)
+    {
+        if ((sent = send( s, data, size, 0 )) <= 0) return FALSE;
+        data += sent;
+        size -= sent;
+    }
+    return TRUE;
+}
+
+static BOOL xodus_recv( SOCKET s, char *data, int size )
+{
+    int received;
+
+    while (size > 0)
+    {
+        if ((received = recv( s, data, size, 0 )) <= 0) return FALSE;
+        data += received;
+        size -= received;
+    }
+    return TRUE;
+}
+
+static HRESULT xodus_request( UINT16 type, const char *body, UINT16 size, char **response, UINT16 *responseSize )
+{
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    UINT32 magic = XODUS_XML_MAGIC;
+    UINT16 responseType;
+    SOCKET s = INVALID_SOCKET;
+    char header[8];
+    WSADATA wsa;
+    HRESULT hr;
+
+    if (FAILED(hr = xodus_socket_path( addr.sun_path, sizeof(addr.sun_path) ))) return hr;
+    if (WSAStartup( MAKEWORD( 2, 2 ), &wsa )) return E_FAIL;
+
+    memcpy( header, &magic, 4 );
+    memcpy( header + 4, &type, 2 );
+    memcpy( header + 6, &size, 2 );
+
+    if ((s = socket( AF_UNIX, SOCK_STREAM, 0 )) == INVALID_SOCKET) goto error;
+    if (connect( s, (struct sockaddr *)&addr, sizeof(addr) )) goto error;
+    if (!xodus_send( s, header, sizeof(header) ) || !xodus_send( s, body, size )) goto error;
+    if (!xodus_recv( s, header, sizeof(header) )) goto error;
+
+    memcpy( &responseType, header + 4, 2 );
+    memcpy( responseSize, header + 6, 2 );
+    if (memcmp( header, &magic, 4 ) || responseType != type + 1 || !*responseSize)
+    {
+        hr = E_UNEXPECTED;
+        goto done;
+    }
+    if (!(*response = calloc( 1, *responseSize + 1 )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+    if (!xodus_recv( s, *response, *responseSize ))
+    {
+        free( *response );
+        *response = NULL;
+        goto error;
+    }
+    hr = S_OK;
+    goto done;
+
+error:
+    hr = HRESULT_FROM_WIN32( WSAGetLastError() );
+    if (SUCCEEDED(hr)) hr = E_FAIL;
+done:
+    if (s != INVALID_SOCKET) closesocket( s );
+    WSACleanup();
+    return hr;
+}
+
+static char *xml_child_content( xmlNodePtr root, const char *name )
+{
+    xmlNodePtr child;
+    xmlChar *content;
+    char *value;
+
+    for (child = root ? root->children : NULL; child; child = child->next)
+    {
+        if (child->type != XML_ELEMENT_NODE || strcmp( (const char *)child->name, name )) continue;
+        if (!(content = xmlNodeGetContent( child ))) return NULL;
+        value = strdup( (const char *)content );
+        xmlFree( content );
+        return value;
+    }
+    return NULL;
+}
+
 static HRESULT get_rps_tickets( BOOLEAN allowUi, char **userTicket, char **deviceTicket )
 {
-    FIXME( "allowUi %d, userTicket %p, deviceTicket %p stub!\n", allowUi, userTicket, deviceTicket );
-    return E_NOTIMPL;
+    UINT16 responseSize = 0;
+    char *response = NULL;
+    xmlChar *body = NULL;
+    xmlNodePtr root;
+    xmlDocPtr doc;
+    int bodySize;
+    HRESULT hr;
+
+    TRACE( "allowUi %d, userTicket %p, deviceTicket %p, msaAppId %s, fullTrust %d.\n", allowUi, userTicket, deviceTicket, debugstr_a( msaAppId ), fullTrust );
+
+    if (!msaAppId) return E_GAME_MISSING_GAME_CONFIG;
+
+    if (!(doc = xmlNewDoc( BAD_CAST "1.0" ))) return E_OUTOFMEMORY;
+    root = xmlNewNode( NULL, BAD_CAST "MSATokenRequest" );
+    xmlDocSetRootElement( doc, root );
+    xmlNewTextChild( root, NULL, BAD_CAST "ClientId", BAD_CAST msaAppId );
+    xmlNewTextChild( root, NULL, BAD_CAST "AllowUi", BAD_CAST (allowUi ? "true" : "false") );
+    xmlNewTextChild( root, NULL, BAD_CAST "MSAFullTrust", BAD_CAST (fullTrust ? "true" : "false") );
+    xmlDocDumpMemory( doc, &body, &bodySize );
+    xmlFreeDoc( doc );
+    if (!body) return E_OUTOFMEMORY;
+    if (bodySize > 0xffff)
+    {
+        xmlFree( body );
+        return E_INVALIDARG;
+    }
+
+    hr = xodus_request( XODUS_MSA_TOKEN_REQUEST, (const char *)body, bodySize, &response, &responseSize );
+    xmlFree( body );
+    if (FAILED(hr))
+    {
+        ERR( "xodus-service request failed, hr %#lx. Is xodus-service running?\n", hr );
+        return hr;
+    }
+
+    if (!(doc = xmlReadMemory( response, responseSize, NULL, NULL, 0 )))
+    {
+        free( response );
+        return E_UNEXPECTED;
+    }
+    root = xmlDocGetRootElement( doc );
+    *userTicket = xml_child_content( root, "Token" );
+    *deviceTicket = xml_child_content( root, "DeviceRps" );
+    xmlFreeDoc( doc );
+    free( response );
+
+    if (!*userTicket || !**userTicket || !*deviceTicket || !**deviceTicket)
+    {
+        ERR( "xodus-service returned incomplete tickets.\n" );
+        free( *userTicket );
+        free( *deviceTicket );
+        *userTicket = *deviceTicket = NULL;
+        return E_UNEXPECTED;
+    }
+
+    TRACE( "got user and device tickets.\n" );
+    return S_OK;
 }
 
 static HRESULT device_auth( XUserHandle user, const char *deviceTicket, char **deviceToken )
@@ -412,6 +600,12 @@ static HRESULT WINAPI user_Initialize( IUser *iface, const XUserAddOptions optio
     if (FAILED(hr = load_endpoints( impl, defaultBuffer, size ))) goto cleanup;
     if (FAILED(hr = get_rps_tickets( options & XUserAddOptions_AddDefaultUserAllowingUI, &userTicket, &deviceTicket ))) goto cleanup;
     if (FAILED(hr = device_auth( impl, deviceTicket, &deviceToken ))) goto cleanup;
+    free( impl->deviceToken );
+    if (!(impl->deviceToken = strdup( deviceToken )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto cleanup;
+    }
     if (FAILED(hr = sisu_auth( impl, userTicket, deviceToken, &auth ))) goto cleanup;
     if (FAILED(hr = http_request( L"GET", L"https://title.mgt.xboxlive.com/titles/current/endpoints", NULL, auth, ACCEPT_JSON, &currentBuffer, &size ))) goto cleanup;
     if (FAILED(hr = load_endpoints( impl, currentBuffer, size ))) goto cleanup;
@@ -570,9 +764,9 @@ cleanup:
 static HRESULT WINAPI user_GetSignature( IUser *iface, UINT32 version, const char *method, const char *url, const char *auth, UINT32 bodySize, const void *body, char signature[104] )
 {
     BYTE hash[32], rawSignature[76] = { (version >> 24) & 0xff, (version >> 16) & 0xff, (version >> 8) & 0xff, version & 0xff };
-    URL_COMPONENTSA uc = { .dwStructSize = sizeof(URL_COMPONENTSA), .dwUrlPathLength = -1, .dwExtraInfoLength = -1 };
     struct XUser *impl = impl_from_IUser( iface );
-    ULONG dataBufferSize, dummy;
+    const char *pathAndQuery = "/", *scheme;
+    ULONG dataBufferSize, dummy, pathLength;
     BYTE *dataBuffer, *ptr;
     FILETIME timestamp;
     NTSTATUS status;
@@ -580,8 +774,10 @@ static HRESULT WINAPI user_GetSignature( IUser *iface, UINT32 version, const cha
 
     TRACE( "iface %p, version %d, method %s, url %s, auth %p, bodySize %d, body %p, signature %p.\n", iface, version, debugstr_a( method ), debugstr_a( url ), auth, bodySize, body, signature );
 
-    if (!InternetCrackUrlA( url, 0, 0, &uc )) return HRESULT_FROM_WIN32( GetLastError() );
-    dataBufferSize = 18 + strlen( method ) + uc.dwUrlPathLength + uc.dwExtraInfoLength + strlen( auth ) + bodySize;
+    if (!url || !(scheme = strstr( url, "://" ))) return E_INVALIDARG;
+    if (strchr( scheme + 3, '/' )) pathAndQuery = strchr( scheme + 3, '/' );
+    pathLength = strlen( pathAndQuery );
+    dataBufferSize = 18 + strlen( method ) + pathLength + strlen( auth ) + bodySize;
 
     /* filetime */
     GetSystemTimeAsFileTime( &timestamp );
@@ -600,8 +796,10 @@ static HRESULT WINAPI user_GetSignature( IUser *iface, UINT32 version, const cha
     memcpy( dataBuffer + 5, rawSignature + 4, 8 );
     ptr = dataBuffer + 14;
     while (*method) *(ptr++) = toupper( *(method++) );
-    ptr += strlen( memcpy( ptr + 1, uc.lpszUrlPath, uc.dwUrlPathLength + uc.dwExtraInfoLength ) ) + 2;
-    ptr += strlen( memcpy( ptr, auth, strlen( auth ) ) ) + 1;
+    memcpy( ptr + 1, pathAndQuery, pathLength );
+    ptr += pathLength + 2;
+    memcpy( ptr, auth, strlen( auth ) );
+    ptr += strlen( auth ) + 1;
     memcpy( ptr, body, bodySize );
 
     /* sign hash of signature content */
@@ -704,8 +902,10 @@ static void WINAPI x_user_XUserCloseHandle( IXUserImpl6 *iface, XUserHandle user
 
 static INT32 WINAPI x_user_XUserCompare( IXUserImpl6 *iface, XUserHandle user1, XUserHandle user2 )
 {
-    FIXME( "iface %p, user1 %p, user2 %p stub!\n", iface, user1, user2 );
-    return E_NOTIMPL;
+    UINT64 a = user1 ? user1->xuid : 0, b = user2 ? user2->xuid : 0;
+    TRACE( "iface %p, user1 %p, user2 %p.\n", iface, user1, user2 );
+    if (user1 == user2) return 0;
+    return a < b ? -1 : a > b ? 1 : 0;
 }
 
 static HRESULT WINAPI x_user_XUserGetMaxUsers( IXUserImpl6 *iface, UINT32 *maxUsers )
@@ -720,6 +920,40 @@ struct XUserAddContext
     XUserAddOptions options;
     XUserHandle user;
 };
+
+static struct XUser *signed_in_user;
+static CRITICAL_SECTION signed_in_section;
+static CRITICAL_SECTION_DEBUG signed_in_section_debug =
+{
+    0, 0, &signed_in_section,
+    { &signed_in_section_debug.ProcessLocksList, &signed_in_section_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": signed_in_section") }
+};
+static CRITICAL_SECTION signed_in_section = { &signed_in_section_debug, -1, 0, 0, 0, 0 };
+
+static void set_signed_in_user( struct XUser *user )
+{
+    EnterCriticalSection( &signed_in_section );
+    IUser_AddRef( &user->IUser_iface );
+    if (signed_in_user) IUser_Release( &signed_in_user->IUser_iface );
+    signed_in_user = user;
+    LeaveCriticalSection( &signed_in_section );
+}
+
+static HRESULT find_signed_in_user( UINT64 xuid, UINT64 localId, XUserHandle *handle )
+{
+    HRESULT hr = E_GAMEUSER_USER_NOT_FOUND;
+    if (!handle) return E_INVALIDARG;
+    EnterCriticalSection( &signed_in_section );
+    if (signed_in_user && ((xuid && signed_in_user->xuid == xuid) || (localId && localId == 1)))
+    {
+        IUser_AddRef( &signed_in_user->IUser_iface );
+        *handle = signed_in_user;
+        hr = S_OK;
+    }
+    LeaveCriticalSection( &signed_in_section );
+    return hr;
+}
 
 static HRESULT WINAPI XUserAddProvider( XAsyncOp op, const XAsyncProviderData *data )
 {
@@ -750,9 +984,15 @@ static HRESULT WINAPI XUserAddProvider( XAsyncOp op, const XAsyncProviderData *d
             }
             context->user->IUser_iface.lpVtbl = &user_vtbl;
             context->user->ref = 1;
-            hr = IUser_Initialize( &context->user->IUser_iface, context->options );
+            InitializeCriticalSection( &context->user->deviceAuthSection );
+            {
+                HRESULT init = CoInitializeEx( NULL, COINIT_MULTITHREADED );
+                hr = IUser_Initialize( &context->user->IUser_iface, context->options );
+                if (SUCCEEDED(init)) CoUninitialize();
+            }
 
         complete:
+            if (SUCCEEDED(hr)) set_signed_in_user( context->user );
             IXThreadingImpl_XAsyncComplete( xthreading, data->async, hr, SUCCEEDED(hr) ? sizeof(XUserHandle) : 0 );
             if (FAILED(hr) && context->user) IUser_Release( &context->user->IUser_iface );
             hr = S_OK;
@@ -809,14 +1049,16 @@ static HRESULT WINAPI x_user_XUserAddResult( IXUserImpl6 *iface, XAsyncBlock *as
 
 static HRESULT WINAPI x_user_XUserGetLocalId( IXUserImpl6 *iface, XUserHandle user, XUserLocalId *userLocalId )
 {
-    FIXME( "iface %p, user %p, userLocalId %p stub!\n", iface, user, userLocalId );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, userLocalId %p.\n", iface, user, userLocalId );
+    if (!user || !userLocalId) return E_INVALIDARG;
+    userLocalId->value = 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_user_XUserFindUserByLocalId( IXUserImpl6 *iface, XUserLocalId userLocalId, XUserHandle *handle )
 {
-    FIXME( "iface %p, userLocalId %p, handle %p stub!\n", iface, &userLocalId, handle );
-    return E_NOTIMPL;
+    TRACE( "iface %p, userLocalId %llu, handle %p.\n", iface, userLocalId.value, handle );
+    return find_signed_in_user( 0, userLocalId.value, handle );
 }
 
 static HRESULT WINAPI x_user_XUserGetId( IXUserImpl6 *iface, XUserHandle user, UINT64 *userId )
@@ -828,8 +1070,8 @@ static HRESULT WINAPI x_user_XUserGetId( IXUserImpl6 *iface, XUserHandle user, U
 
 static HRESULT WINAPI x_user_XUserFindUserById( IXUserImpl6 *iface, UINT64 userId, XUserHandle *handle )
 {
-    FIXME( "iface %p, userId %llu, handle %p stub!\n", iface, userId, handle );
-    return E_NOTIMPL;
+    TRACE( "iface %p, userId %llu, handle %p.\n", iface, userId, handle );
+    return find_signed_in_user( userId, 0, handle );
 }
 
 static HRESULT WINAPI x_user_XUserGetIsGuest( IXUserImpl6 *iface, XUserHandle user, BOOLEAN *isGuest )
@@ -1689,3 +1931,153 @@ static struct x_user x_user =
 
 IXUserImpl *x_user_impl = (IXUserImpl *)&x_user.IXUserImpl6_iface;
 IXUserDeviceImpl *x_user_device_impl = (IXUserDeviceImpl *)&x_user.IXUserDeviceImpl2_iface;
+
+static char *hstring_to_utf8( HSTRING string )
+{
+    const WCHAR *buffer = WindowsGetStringRawBuffer( string, NULL );
+    int size = WideCharToMultiByte( CP_UTF8, 0, buffer, -1, NULL, 0, NULL, NULL );
+    char *out;
+
+    if (!size || !(out = calloc( 1, size ))) return NULL;
+    WideCharToMultiByte( CP_UTF8, 0, buffer, -1, out, size, NULL, NULL );
+    return out;
+}
+
+static WCHAR *utf8_to_wide( const char *string )
+{
+    int size = MultiByteToWideChar( CP_UTF8, 0, string, -1, NULL, 0 );
+    WCHAR *out;
+
+    if (!size || !(out = calloc( size, sizeof(WCHAR) ))) return NULL;
+    MultiByteToWideChar( CP_UTF8, 0, string, -1, out, size );
+    return out;
+}
+
+UINT64 xuser_get_xuid( XUserHandle user )
+{
+    return user->xuid;
+}
+
+HRESULT xuser_signed_request( XUserHandle user, const char *method, const char *url, const char *auth, const char *extraHeaders,
+                              const void *body, DWORD bodySize, DWORD *status, BYTE **buffer, SIZE_T *bufferSize )
+{
+    WCHAR *methodW = NULL, *urlW = NULL, *headersW = NULL;
+    char signature[105] = { 0 }, *headers = NULL;
+    SIZE_T headersSize;
+    HRESULT hr;
+
+    TRACE( "user %p, method %s, url %s, bodySize %lu.\n", user, debugstr_a( method ), debugstr_a( url ), bodySize );
+
+    if (FAILED(hr = IUser_GetSignature( &user->IUser_iface, 1, method, url, auth ? auth : "", min( bodySize, 8192 ), body, signature ))) return hr;
+    headersSize = strlen( "Authorization: \r\nSignature: \r\n" ) + (auth ? strlen( auth ) : 0) + 104 + (extraHeaders ? strlen( extraHeaders ) : 0) + 1;
+    if (!(headers = calloc( 1, headersSize ))) return E_OUTOFMEMORY;
+    if (auth) snprintf( headers, headersSize, "Authorization: %s\r\nSignature: %s\r\n%s", auth, signature, extraHeaders ? extraHeaders : "" );
+    else snprintf( headers, headersSize, "Signature: %s\r\n%s", signature, extraHeaders ? extraHeaders : "" );
+
+    if (!(methodW = utf8_to_wide( method )) || !(urlW = utf8_to_wide( url )) || !(headersW = utf8_to_wide( headers ))) hr = E_OUTOFMEMORY;
+    else
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            if (attempt)
+            {
+                WARN( "request %s %s failed with hr %#lx, retrying.\n", debugstr_a( method ), debugstr_a( url ), hr );
+                Sleep( 500 * attempt );
+            }
+            if (SUCCEEDED(hr = http_request_raw( methodW, urlW, headersW, body, bodySize, status, buffer, bufferSize )) && *status < 500) break;
+            if (SUCCEEDED(hr))
+            {
+                free( *buffer );
+                *buffer = NULL;
+                *bufferSize = 0;
+            }
+        }
+    }
+
+    free( methodW );
+    free( urlW );
+    free( headersW );
+    free( headers );
+    return hr;
+}
+
+HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, char **auth )
+{
+    static const char url[] = "https://xsts.auth.xboxlive.com/xsts/authorize";
+    IJsonObject *object = NULL, *claims = NULL, *identity = NULL;
+    HSTRING token = NULL, uhs = NULL;
+    char *body = NULL, *tokenA = NULL, *uhsA = NULL;
+    IJsonArray *xui = NULL;
+    BYTE *buffer = NULL;
+    SIZE_T size, bufferSize;
+    HRESULT hr, comInit = E_FAIL;
+    DWORD status;
+
+    TRACE( "user %p, relyingParty %s.\n", user, debugstr_a( relyingParty ) );
+
+    if (!user->deviceToken || !user->userToken || !user->proofKey) return E_UNEXPECTED;
+
+    EnterCriticalSection( &user->deviceAuthSection );
+    if (user->deviceAuth && GetTickCount64() - user->deviceAuthTime < 3600 * 1000)
+    {
+        *auth = strdup( user->deviceAuth );
+        LeaveCriticalSection( &user->deviceAuthSection );
+        return *auth ? S_OK : E_OUTOFMEMORY;
+    }
+
+    size = strlen( relyingParty ) + strlen( user->deviceToken ) + strlen( user->userToken ) + strlen( user->proofKey ) + 256;
+    if (!(body = calloc( 1, size )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto cleanup;
+    }
+    snprintf( body, size, "{\"RelyingParty\":\"%s\",\"TokenType\":\"JWT\",\"Properties\":{\"SandboxId\":\"RETAIL\",\"DeviceToken\":\"%s\",\"UserTokens\":[\"%s\"],\"ProofKey\":%s}}",
+              relyingParty, user->deviceToken, user->userToken, user->proofKey );
+
+    if (FAILED(hr = xuser_signed_request( user, "POST", url, NULL, "x-xbl-contract-version: 1\r\nContent-Type: application/json\r\n",
+                                          body, strlen( body ), &status, &buffer, &bufferSize ))) goto cleanup;
+    if (status != 200)
+    {
+        ERR( "xsts device authorization failed, status %lu, body %s.\n", status, debugstr_an( (char *)buffer, bufferSize ) );
+        hr = E_FAIL;
+        goto cleanup;
+    }
+
+    comInit = CoInitializeEx( NULL, COINIT_MULTITHREADED );
+    if (FAILED(hr = parse_json( (char *)buffer, bufferSize, &object ))) goto cleanup;
+    if (FAILED(hr = get_json_string( object, L"Token", &token ))) goto cleanup;
+    if (FAILED(hr = get_json_object( object, L"DisplayClaims", &claims ))) goto cleanup;
+    if (FAILED(hr = get_json_array( claims, L"xui", &xui ))) goto cleanup;
+    if (FAILED(hr = IJsonArray_GetObjectAt( xui, 0, &identity ))) goto cleanup;
+    if (FAILED(hr = get_json_string( identity, L"uhs", &uhs ))) goto cleanup;
+    if (!(tokenA = hstring_to_utf8( token )) || !(uhsA = hstring_to_utf8( uhs )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto cleanup;
+    }
+    size = strlen( "XBL3.0 x=;" ) + strlen( uhsA ) + strlen( tokenA ) + 1;
+    if (!(*auth = calloc( 1, size )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto cleanup;
+    }
+    snprintf( *auth, size, "XBL3.0 x=%s;%s", uhsA, tokenA );
+    free( user->deviceAuth );
+    user->deviceAuth = strdup( *auth );
+    user->deviceAuthTime = GetTickCount64();
+
+cleanup:
+    LeaveCriticalSection( &user->deviceAuthSection );
+    if (identity) IJsonObject_Release( identity );
+    if (claims) IJsonObject_Release( claims );
+    if (object) IJsonObject_Release( object );
+    if (xui) IJsonArray_Release( xui );
+    if (token) WindowsDeleteString( token );
+    if (uhs) WindowsDeleteString( uhs );
+    free( tokenA );
+    free( uhsA );
+    free( buffer );
+    free( body );
+    if (SUCCEEDED(comInit)) CoUninitialize();
+    return hr;
+}
