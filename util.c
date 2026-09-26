@@ -24,7 +24,27 @@ WINE_DEFAULT_DEBUG_CHANNEL(xgameruntime);
 
 static const WCHAR USER_AGENT[] = L"curl/1.0";
 
+static HRESULT http_request_once( const WCHAR *method, const WCHAR *url, char *data, const WCHAR *headers, const WCHAR **accept, UCHAR **buffer, SIZE_T *bufferSize );
+
 HRESULT http_request( const WCHAR *method, const WCHAR *url, char *data, const WCHAR *headers, const WCHAR **accept, UCHAR **buffer, SIZE_T *bufferSize )
+{
+    HRESULT hr = E_FAIL;
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        if (attempt)
+        {
+            WARN( "request %s %s failed with hr %#lx, retrying.\n", debugstr_w( method ), debugstr_w( url ), hr );
+            Sleep( 500 * attempt );
+        }
+        *buffer = NULL;
+        *bufferSize = 0;
+        if (SUCCEEDED(hr = http_request_once( method, url, data, headers, accept, buffer, bufferSize ))) break;
+        if (hr == E_FAIL) break;
+    }
+    return hr;
+}
+
+static HRESULT http_request_once( const WCHAR *method, const WCHAR *url, char *data, const WCHAR *headers, const WCHAR **accept, UCHAR **buffer, SIZE_T *bufferSize )
 {
     URL_COMPONENTS uc = { .dwStructSize = sizeof(URL_COMPONENTS), .dwHostNameLength = -1, .dwUrlPathLength = -1 };
     HINTERNET connection = NULL, request = NULL, session = NULL;
@@ -44,10 +64,10 @@ HRESULT http_request( const WCHAR *method, const WCHAR *url, char *data, const W
     }
     memcpy( hostName, uc.lpszHostName, uc.dwHostNameLength * sizeof(WCHAR) );
 
-    if (!(session = WinHttpOpen( USER_AGENT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0 ))) goto error;
+    if (!(session = WinHttpOpen( USER_AGENT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0 ))) goto error;
     if (!(connection = WinHttpConnect( session, hostName, INTERNET_DEFAULT_HTTPS_PORT, 0 ))) goto error;
     if (!(request = WinHttpOpenRequest( connection, method, uc.lpszUrlPath, NULL, WINHTTP_NO_REFERER, accept, WINHTTP_FLAG_SECURE ))) goto error;
-    if (!WinHttpSendRequest( request, headers, -1, data, (data ? strlen( data ) : 0), (data ? strlen( data ) : 0), 0 )) goto error;
+    if (!WinHttpSendRequest( request, headers ? headers : WINHTTP_NO_ADDITIONAL_HEADERS, headers ? -1 : 0, data, (data ? strlen( data ) : 0), (data ? strlen( data ) : 0), 0 )) goto error;
     if (!WinHttpReceiveResponse( request, NULL )) goto error;
     if (!WinHttpQueryHeaders( request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                               WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX )) goto error;
@@ -89,6 +109,71 @@ cleanup:
     if (*buffer) free( *buffer );
     *bufferSize = 0;
     *buffer = NULL;
+    return hr;
+}
+
+HRESULT http_request_raw( const WCHAR *method, const WCHAR *url, const WCHAR *headers, const void *body, DWORD bodySize, DWORD *status, BYTE **buffer, SIZE_T *bufferSize )
+{
+    URL_COMPONENTS uc = { .dwStructSize = sizeof(URL_COMPONENTS), .dwHostNameLength = -1, .dwUrlPathLength = -1 };
+    HINTERNET connection = NULL, request = NULL, session = NULL;
+    DWORD size = sizeof(DWORD);
+    WCHAR *hostName = NULL;
+    BYTE *tmpBuffer;
+    HRESULT hr = S_OK;
+
+    TRACE( "method %s, url %s, bodySize %lu.\n", debugstr_w( method ), debugstr_w( url ), bodySize );
+
+    *buffer = NULL;
+    *bufferSize = 0;
+    *status = 0;
+    if (!WinHttpCrackUrl( url, 0, 0, &uc )) goto error;
+    if (!(hostName = calloc( uc.dwHostNameLength + 1, sizeof(WCHAR) )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto cleanup;
+    }
+    memcpy( hostName, uc.lpszHostName, uc.dwHostNameLength * sizeof(WCHAR) );
+
+    if (!(session = WinHttpOpen( USER_AGENT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0 ))) goto error;
+    if (!(connection = WinHttpConnect( session, hostName, uc.nPort, 0 ))) goto error;
+    if (!(request = WinHttpOpenRequest( connection, method, uc.lpszUrlPath, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                        uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0 ))) goto error;
+    if (!WinHttpSendRequest( request, headers ? headers : WINHTTP_NO_ADDITIONAL_HEADERS, headers ? -1 : 0, (void *)body, bodySize, bodySize, 0 )) goto error;
+    if (!WinHttpReceiveResponse( request, NULL )) goto error;
+    if (!WinHttpQueryHeaders( request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                              WINHTTP_HEADER_NAME_BY_INDEX, status, &size, WINHTTP_NO_HEADER_INDEX )) goto error;
+
+    do
+    {
+        if (!WinHttpQueryDataAvailable( request, &size )) goto error;
+        if (!size) break;
+        if (!(tmpBuffer = realloc( *buffer, *bufferSize + size + 1 )))
+        {
+            hr = E_OUTOFMEMORY;
+            goto cleanup;
+        }
+        *buffer = tmpBuffer;
+        if (!WinHttpReadData( request, *buffer + *bufferSize, size, &size )) goto error;
+        *bufferSize += size;
+        (*buffer)[*bufferSize] = 0;
+    }
+    while (size);
+    goto cleanup;
+
+error:
+    hr = HRESULT_FROM_WIN32( GetLastError() );
+cleanup:
+    if (request) WinHttpCloseHandle( request );
+    if (connection) WinHttpCloseHandle( connection );
+    if (session) WinHttpCloseHandle( session );
+    free( hostName );
+    if (FAILED(hr))
+    {
+        free( *buffer );
+        *buffer = NULL;
+        *bufferSize = 0;
+    }
+    TRACE( "status %lu, size %Iu, hr %#lx.\n", *status, *bufferSize, hr );
     return hr;
 }
 

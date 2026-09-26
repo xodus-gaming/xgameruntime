@@ -20,6 +20,7 @@
 #define __WINE_XGAMERUNTIME_UTIL_H
 
 HRESULT http_request( const WCHAR *method, const WCHAR *url, char *data, const WCHAR *headers,  const WCHAR **accept, UCHAR **buffer, SIZE_T *bufferSize );
+HRESULT http_request_raw( const WCHAR *method, const WCHAR *url, const WCHAR *headers, const void *body, DWORD bodySize, DWORD *status, BYTE **buffer, SIZE_T *bufferSize );
 HRESULT encode_base64( const UINT32 dataSize, const BYTE *data, const UINT32 base64Size, char *base64, BOOLEAN pad );
 HRESULT encode_base64_url( const UINT32 dataSize, const BYTE *data, const UINT32 base64Size, char *base64, BOOLEAN pad );
 HRESULT encode_base64_utf16( const UINT32 dataSize, const BYTE *data, const UINT32 base64Size, WCHAR *base64, BOOLEAN pad );
