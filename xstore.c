@@ -75,13 +75,16 @@ static ULONG WINAPI x_store_Release( IXStoreImpl6 *iface )
 
 static HRESULT WINAPI x_store_XStoreCreateContext( IXStoreImpl6 *iface, const XUserHandle user, XStoreContextHandle *storeContextHandle )
 {
-    FIXME( "iface %p, user %p, storeContextHandle %p stub!\n", iface, user, storeContextHandle );
-    return E_NOTIMPL;
+    TRACE( "iface %p, user %p, storeContextHandle %p.\n", iface, user, storeContextHandle );
+    if (!storeContextHandle) return E_POINTER;
+    if (!(*storeContextHandle = calloc( 1, sizeof(LONG) ))) return E_OUTOFMEMORY;
+    return S_OK;
 }
 
 static void WINAPI x_store_XStoreCloseContextHandle( IXStoreImpl6 *iface, XStoreContextHandle storeContextHandle )
 {
-    FIXME( "iface %p, storeContextHandle %p stub!\n", iface, storeContextHandle );
+    TRACE( "iface %p, storeContextHandle %p.\n", iface, storeContextHandle );
+    free( storeContextHandle );
 }
 
 static HRESULT WINAPI x_store_XStoreQueryAssociatedProductsAsync( IXStoreImpl6 *iface, const XStoreContextHandle storeContextHandle, XStoreProductKind productKinds, UINT32 maxItemsToRetrievePerPage, XAsyncBlock *async )
@@ -220,16 +223,69 @@ static HRESULT WINAPI x_store_XStoreCanAcquireLicenseForPackageResult( IXStoreIm
     return E_NOTIMPL;
 }
 
+static HRESULT WINAPI XStoreQueryGameLicenseProvider( XAsyncOp op, const XAsyncProviderData *data )
+{
+    XStoreGameLicense *license;
+    IXThreadingImpl *xthreading;
+    HRESULT hr;
+
+    TRACE( "op %d, data %p.\n", op, data );
+
+    if (FAILED(hr = QueryApiImpl( &CLSID_XThreadingImpl, &IID_IXThreadingImpl, (void **)&xthreading ))) return hr;
+
+    switch (op)
+    {
+        case XAsyncOp_Begin:
+            hr = IXThreadingImpl_XAsyncSchedule( xthreading, data->async, 0 );
+            break;
+
+        case XAsyncOp_DoWork:
+            IXThreadingImpl_XAsyncComplete( xthreading, data->async, S_OK, sizeof(XStoreGameLicense) );
+            break;
+
+        case XAsyncOp_GetResult:
+            license = data->buffer;
+            memset( license, 0, sizeof(*license) );
+            if (storeId) snprintf( license->skuStoreId, sizeof(license->skuStoreId), "%s/0010", storeId );
+            license->isActive = TRUE;
+            license->expirationDate = 4102444800;
+            break;
+
+        case XAsyncOp_Cleanup:
+        case XAsyncOp_Cancel:
+            break;
+    }
+
+    IXThreadingImpl_Release( xthreading );
+    return hr;
+}
+
 static HRESULT WINAPI x_store_XStoreQueryGameLicenseAsync( IXStoreImpl6 *iface, const XStoreContextHandle storeContextHandle, XAsyncBlock *async )
 {
-    FIXME( "iface %p, storeContextHandle %p, async %p stub!\n", iface, storeContextHandle, async );
-    return E_NOTIMPL;
+    IXThreadingImpl *xthreading;
+    HRESULT hr;
+
+    TRACE( "iface %p, storeContextHandle %p, async %p, storeId %s.\n", iface, storeContextHandle, async, debugstr_a( storeId ) );
+
+    if (!storeContextHandle || !async) return E_INVALIDARG;
+    if (FAILED(hr = QueryApiImpl( &CLSID_XThreadingImpl, &IID_IXThreadingImpl, (void **)&xthreading ))) return hr;
+    hr = IXThreadingImpl_XAsyncBegin( xthreading, async, NULL, x_store_XStoreQueryGameLicenseAsync, "XStoreQueryGameLicenseAsync", XStoreQueryGameLicenseProvider );
+    IXThreadingImpl_Release( xthreading );
+    return hr;
 }
 
 static HRESULT WINAPI x_store_XStoreQueryGameLicenseResult( IXStoreImpl6 *iface, XAsyncBlock *async, XStoreGameLicense *license )
 {
-    FIXME( "iface %p, async %p, license %p stub!\n", iface, async, license );
-    return E_NOTIMPL;
+    IXThreadingImpl *xthreading;
+    HRESULT hr;
+
+    TRACE( "iface %p, async %p, license %p.\n", iface, async, license );
+
+    if (!async || !license) return E_INVALIDARG;
+    if (FAILED(hr = QueryApiImpl( &CLSID_XThreadingImpl, &IID_IXThreadingImpl, (void **)&xthreading ))) return hr;
+    hr = IXThreadingImpl_XAsyncGetResult( xthreading, async, x_store_XStoreQueryGameLicenseAsync, sizeof(*license), license, NULL );
+    IXThreadingImpl_Release( xthreading );
+    return hr;
 }
 
 static HRESULT WINAPI x_store_XStoreQueryAddOnLicensesAsync( IXStoreImpl6 *iface, const XStoreContextHandle storeContextHandle, XAsyncBlock *async )

@@ -65,6 +65,13 @@
 #include <windows.system.profile.h>
 
 extern char *msaAppId;
+extern UINT32 titleId;
+extern char *storeId;
+extern char *packageFamilyName;
+UINT64 xuser_get_xuid( XUserHandle user );
+HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, char **auth );
+HRESULT xuser_signed_request( XUserHandle user, const char *method, const char *url, const char *auth, const char *extraHeaders,
+                              const void *body, DWORD bodySize, DWORD *status, BYTE **buffer, SIZE_T *bufferSize );
 extern BOOLEAN fullTrust;
 extern DWORD tlsIndex;
 extern XTaskQueueHandle processQueue;

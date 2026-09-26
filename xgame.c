@@ -70,10 +70,12 @@ static ULONG WINAPI x_game_Release( IXGameImpl3 *iface )
     return ref;
 }
 
-static HRESULT WINAPI x_game_XGameGetXboxTitleId( IXGameImpl3 *iface, UINT32 *titleId )
+static HRESULT WINAPI x_game_XGameGetXboxTitleId( IXGameImpl3 *iface, UINT32 *out )
 {
-    FIXME( "iface %p, titleId %p stub!\n", iface, titleId );
-    return E_NOTIMPL;
+    TRACE( "iface %p, out %p, titleId %#x.\n", iface, out, titleId );
+    if (!out) return E_POINTER;
+    if (!(*out = titleId)) return E_GAME_MISSING_GAME_CONFIG;
+    return S_OK;
 }
 
 static void WINAPI x_game_XLaunchNewGame( IXGameImpl3 *iface, const char *exePath, const char *args, XUserHandle defaultUser )
