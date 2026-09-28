@@ -100,6 +100,8 @@ struct XTaskQueueObject
     XTaskQueuePortHandle completion;
     XTaskQueueTerminatedCallback *terminatedCallback;
     void *terminatedContext;
+    BOOL composite;
+    LONG terminated;
     struct
     {
         struct monitor_context *entries;
@@ -529,6 +531,7 @@ static HRESULT WINAPI x_threading_XTaskQueueCreateComposite( IXThreadingImpl *if
     (*queue)->ref = 1;
     (*queue)->work = workPort;
     (*queue)->completion = completionPort;
+    (*queue)->composite = TRUE;
     IUnknown_AddRef( &workPort->IUnknown_iface );
     IUnknown_AddRef( &completionPort->IUnknown_iface );
     InitializeCriticalSection( &(*queue)->monitors.cs );
@@ -658,6 +661,7 @@ static HRESULT WINAPI x_threading_XTaskQueueSubmitDelayedCallback( IXThreadingIm
         default:
             return E_INVALIDARG;
     }
+    if (queue->terminated) return E_ABORT;
 
     /*
      * increment before check terminating, otherwise we might terminate between check and dispatch
@@ -764,11 +768,39 @@ static void CALLBACK terminated_handler( TP_CALLBACK_INSTANCE *, XTaskQueueHandl
     IUnknown_Release( &queue->IUnknown_iface );
 }
 
+static void CALLBACK composite_terminated_handler( TP_CALLBACK_INSTANCE *, void *context )
+{
+    XTaskQueueHandle queue = context;
+    XTaskQueueTerminatedCallback *callback;
+
+    if ((callback = InterlockedExchangePointer( (void **)&queue->terminatedCallback, NULL ))) callback( queue->terminatedContext );
+    IUnknown_Release( &queue->IUnknown_iface );
+}
+
+static void composite_terminated( XTaskQueueHandle queue )
+{
+    IUnknown_AddRef( &queue->IUnknown_iface );
+    if (!TrySubmitThreadpoolCallback( composite_terminated_handler, queue, NULL )) IUnknown_Release( &queue->IUnknown_iface );
+}
+
 static HRESULT WINAPI x_threading_XTaskQueueTerminate( IXThreadingImpl *iface, XTaskQueueHandle queue, BOOLEAN wait, void *callbackContext, XTaskQueueTerminatedCallback *callback )
 {
     HANDLE objects[2] = { queue->work->terminated, queue->completion->terminated };
 
     TRACE( "iface %p, queue %p, wait %d, callbackContext %p, callback %p.\n", iface, queue, wait, callbackContext, callback );
+
+    if (queue->composite)
+    {
+        /* ponytail: the ports belong to another queue, so only new submissions are refused; callbacks already queued still run */
+        InterlockedExchange( &queue->terminated, TRUE );
+        if (callback)
+        {
+            queue->terminatedContext = callbackContext;
+            queue->terminatedCallback = callback;
+            composite_terminated( queue );
+        }
+        return S_OK;
+    }
 
     SetEvent( queue->work->terminating );
     SetEvent( queue->completion->terminating );
