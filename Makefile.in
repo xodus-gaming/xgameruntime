@@ -1,8 +1,11 @@
 MODULE    = xgameruntime.dll
-IMPORTS   = combase
+EXTRAINCL = $(XML2_PE_CFLAGS)
+IMPORTS   = bcrypt combase shlwapi winhttp wininet ws2_32 $(XML2_PE_LIBS)
 
 SOURCES = \
 	main.c \
+	userprovider.idl \
+	util.c \
 	xaccessibility.c \
 	xaccessibility.idl \
 	xappcapture.c \
