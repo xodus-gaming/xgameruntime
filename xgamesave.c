@@ -963,7 +963,13 @@ static HRESULT cloud_sync( struct XGameSaveProvider *provider )
     if (FAILED(hr = xuser_device_authorization( provider->user, "http://xboxlive.com", &provider->auth ))) return hr;
 
     if (FAILED(hr = cloud_request( provider, "GET", "", NULL, NULL, 0, &status, &buffer, &size ))) return hr;
-    if (status != 200 || !(blobs = json_find( (char *)buffer, "blobs" )) || *blobs != '[')
+    if (status == 404)
+    {
+        free( buffer );
+        buffer = (BYTE *)strdup( "{\"blobs\":[]}" );
+        status = 200;
+    }
+    if (status != 200 || !buffer || !(blobs = json_find( (char *)buffer, "blobs" )) || *blobs != '[')
     {
         free( buffer );
         return E_FAIL;

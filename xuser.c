@@ -98,6 +98,7 @@ struct XUser
     char *proofKey;
     char *userToken;
     char *deviceToken;
+    char *titleToken;
     char *deviceAuth;
     ULONGLONG deviceAuthTime;
     CRITICAL_SECTION deviceAuthSection;
@@ -137,6 +138,7 @@ static ULONG WINAPI user_Release( IUser *iface )
         if (impl->proofKey) free( impl->proofKey );
         if (impl->userToken) free( impl->userToken );
         free( impl->deviceToken );
+        free( impl->titleToken );
         free( impl->deviceAuth );
         if (impl->policies) free( impl->policies );
         if (impl->endpoints) {
@@ -384,12 +386,16 @@ cleanup:
     return hr;
 }
 
+static HRESULT xsts_authorize( XUserHandle user, const char *relyingParty, BOOL title, char **auth );
+static char *hstring_to_utf8( HSTRING string );
+static WCHAR *utf8_to_wide( const char *string );
+
 static HRESULT sisu_auth( XUserHandle user, const char *userTicket, const char *deviceToken, WCHAR **auth )
 {
     static const char template[] = "{\"Sandbox\":\"RETAIL\",\"UseModernGamertag\":true,\"DeviceToken\":\"";
     SIZE_T size = ARRAY_SIZE( template ) + strlen( deviceToken ) + strlen( "\",\"AccessToken\":\"\"}" ) + strlen( userTicket );
-    HSTRING authToken = NULL, gtg = NULL, mgs = NULL, mgt = NULL, umg = NULL, userToken = NULL, xid = NULL;
-    IJsonObject *authObject = NULL, *claims = NULL, *identity = NULL, *object = NULL, *userObject = NULL;
+    HSTRING authToken = NULL, gtg = NULL, mgs = NULL, mgt = NULL, umg = NULL, userToken = NULL, xid = NULL, titleToken = NULL;
+    IJsonObject *authObject = NULL, *claims = NULL, *identity = NULL, *object = NULL, *userObject = NULL, *titleObject = NULL;
     WCHAR header[116] = { 'S', 'i', 'g', 'n', 'a', 't', 'u', 'r', 'e', ':', ' ' };
     char *body, signature[104];
     const WCHAR *stringBuffer;
@@ -420,6 +426,11 @@ static HRESULT sisu_auth( XUserHandle user, const char *userTicket, const char *
         goto cleanup;
     }
     if (!WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, stringBuffer, -1, user->userToken, size, NULL, NULL )) goto error;
+    if (SUCCEEDED(get_json_object( object, L"TitleToken", &titleObject )) && SUCCEEDED(get_json_string( titleObject, L"Token", &titleToken )))
+    {
+        free( user->titleToken );
+        user->titleToken = hstring_to_utf8( titleToken );
+    }
     if (FAILED(hr = get_json_object( object, L"AuthorizationToken", &authObject ))) goto cleanup;
     if (FAILED(hr = get_json_object( authObject, L"DisplayClaims", &claims ))) goto cleanup;
     if (FAILED(hr = get_json_array( claims, L"xui", &xui ))) goto cleanup;
@@ -458,6 +469,8 @@ error:
 cleanup:
     if (authObject) IJsonObject_Release( authObject );
     if (userObject) IJsonObject_Release( userObject );
+    if (titleObject) IJsonObject_Release( titleObject );
+    if (titleToken) WindowsDeleteString( titleToken );
     if (authToken) WindowsDeleteString( authToken );
     if (userToken) WindowsDeleteString( userToken );
     if (identity) IJsonObject_Release( identity );
@@ -553,6 +566,9 @@ static HRESULT load_endpoints( XUserHandle user, BYTE *buffer, SIZE_T size )
             (endpointCursor + i)->wildcard = FALSE;
         }
 
+        TRACE( "endpoint %s://%s%s rp %s type %s.\n", debugstr_w( WindowsGetStringRawBuffer( (endpointCursor + i)->protocol, NULL ) ),
+               debugstr_w( WindowsGetStringRawBuffer( (endpointCursor + i)->host, NULL ) ), debugstr_w( WindowsGetStringRawBuffer( (endpointCursor + i)->path, NULL ) ),
+               debugstr_w( WindowsGetStringRawBuffer( (endpointCursor + i)->relyingParty, NULL ) ), debugstr_w( WindowsGetStringRawBuffer( (endpointCursor + i)->tokenType, NULL ) ) );
         IJsonObject_Release(tmpObject);
         tmpObject = NULL;
     }
@@ -653,6 +669,7 @@ static HRESULT WINAPI user_GetEndpointInfo( IUser *iface, const char *url, struc
 {
     URL_COMPONENTSW uc = { .dwStructSize = sizeof(URL_COMPONENTSW), .dwSchemeLength = -1, .dwHostNameLength = -1, .dwUrlPathLength = -1 };
     struct XUser *impl = impl_from_IUser( iface );
+    struct endpoint *match = NULL;
     INT32 urlWSize;
     WCHAR *urlW;
 
@@ -669,27 +686,21 @@ static HRESULT WINAPI user_GetEndpointInfo( IUser *iface, const char *url, struc
         const WCHAR *protocol = WindowsGetStringRawBuffer( impl->endpoints[i].protocol, &protocolLen );
         const WCHAR *host = WindowsGetStringRawBuffer( impl->endpoints[i].host, &hostLen );
         const WCHAR *path = WindowsGetStringRawBuffer( impl->endpoints[i].path, &pathLen );
-        if (uc.dwSchemeLength != protocolLen || wcsncmp( uc.lpszScheme, protocol, protocolLen ))
+        if (uc.dwSchemeLength != protocolLen || wcsnicmp( uc.lpszScheme, protocol, protocolLen )) continue;
+        if (impl->endpoints[i].path && (uc.dwUrlPathLength < pathLen || wcsncmp( uc.lpszUrlPath, path, pathLen ))) continue;
+        if (impl->endpoints[i].wildcard)
         {
-            free( urlW );
+            if (!match && match_wildcard( host, hostLen, uc.lpszHostName, uc.dwHostNameLength )) match = &impl->endpoints[i];
             continue;
         }
-        if (impl->endpoints[i].wildcard ? !match_wildcard( host, hostLen, uc.lpszHostName, uc.dwHostNameLength )
-                                        : (uc.dwHostNameLength != hostLen || wcsncmp( uc.lpszHostName, host, hostLen )))
-        {
-            free( urlW );
-            continue;
-        }
-        if (impl->endpoints[i].path && (uc.dwUrlPathLength != pathLen || wcsncmp( uc.lpszUrlPath, path, pathLen )))
-        {
-            free( urlW );
-            continue;
-        }
-        *info = impl->endpoints[i];
-        free( urlW );
-        return S_OK;
+        if (uc.dwHostNameLength != hostLen || wcsnicmp( uc.lpszHostName, host, hostLen )) continue;
+        match = &impl->endpoints[i];
+        break;
     }
-    return E_FAIL;
+    free( urlW );
+    if (!match) return E_FAIL;
+    *info = *match;
+    return S_OK;
 
 error:
     free(urlW);
@@ -698,66 +709,19 @@ error:
 
 static HRESULT WINAPI user_GetAuthorization( IUser *iface, const WCHAR *relyingParty, WCHAR **auth )
 {
-    static const char template[] = "{\"TokenType\":\"JWT\",\"Properties\":{\"SandboxId\":\"RETAIL\",\"ProofKey\":";
-    IJsonObject *identity = NULL, *claims = NULL, *object = NULL;
     struct XUser *impl = impl_from_IUser( iface );
-    const WCHAR *tokenBuffer, *uhsBuffer;
-    HSTRING token = NULL, uhs = NULL;
-    IJsonArray *xui = NULL;
-    BYTE *buffer = NULL;
-    SIZE_T bufferSize, relyingPartySize;
-    char *body = NULL;
+    char *relyingPartyA, *authA = NULL;
+    SIZE_T size;
     HRESULT hr;
 
     TRACE( "iface %p, relyingParty %s, auth %p.\n", iface, debugstr_w( relyingParty ), auth );
-    if (!(relyingPartySize = WideCharToMultiByte(CP_UTF8, MB_ERR_INVALID_CHARS, relyingParty, -1, NULL, 0, NULL, NULL))) return HRESULT_FROM_WIN32( GetLastError() );
 
-    /* request xsts token */
-    if (!(body = calloc( 1, ARRAY_SIZE( template ) + strlen( impl->proofKey ) + strlen( ",\"UserTokens\":[\"\"]},\"RelyingParty\":\"\"}" ) + strlen( impl->userToken ) + (relyingPartySize - 1) )))
-        return E_OUTOFMEMORY;
-    strcpy( body, template );
-    strcat( body, impl->proofKey );
-    strcat( body, ",\"UserTokens\":[\"" );
-    strcat( body, impl->userToken );
-    strcat( body, "\"]},\"RelyingParty\":\"" );
-    // Add relyingParty
-    if (!WideCharToMultiByte(CP_UTF8, MB_ERR_INVALID_CHARS, relyingParty, -1, body + strlen(body), relyingPartySize, NULL, NULL)) {
-        hr = HRESULT_FROM_WIN32( GetLastError() );
-        goto cleanup;
-    }
-    strcat( body, "\"}" );
-    hr = http_request( L"POST", L"https://xsts.auth.xboxlive.com/xsts/authorize", body, NULL, ACCEPT_JSON, &buffer, &bufferSize );
-    if (FAILED(hr)) goto cleanup;
-
-    /* construct auth header from user hash and token */
-    hr = parse_json( (char *)buffer, bufferSize, &object );
-    if (FAILED(hr)) goto cleanup;
-    if (FAILED(hr = get_json_string( object, L"Token", &token ))) goto cleanup;
-    tokenBuffer = WindowsGetStringRawBuffer( token, NULL );
-    if (FAILED(hr = get_json_object( object, L"DisplayClaims", &claims ))) goto cleanup;
-    if (FAILED(hr = get_json_array( claims, L"xui", &xui ))) goto cleanup;
-    if (FAILED(hr = IJsonArray_GetObjectAt( xui, 0, &identity ))) goto cleanup;
-    if (FAILED(hr = get_json_string( identity, L"uhs", &uhs ))) goto cleanup;
-    uhsBuffer = WindowsGetStringRawBuffer( uhs, NULL );
-    if (!(*auth = calloc( wcslen( L"XBL3.0 x=;" ) + wcslen( uhsBuffer ) + wcslen( tokenBuffer ) + 1, sizeof(WCHAR) )))
-    {
-        hr = E_OUTOFMEMORY;
-        goto cleanup;
-    }
-    wcscpy( *auth, L"XBL3.0 x=" );
-    wcscat( *auth, uhsBuffer );
-    wcscat( *auth, L";" );
-    wcscat( *auth, tokenBuffer );
-
-cleanup:
-    if (identity) IJsonObject_Release( identity );
-    if (claims) IJsonObject_Release( claims );
-    if (object) IJsonObject_Release( object );
-    if (token) WindowsDeleteString( token );
-    if (uhs) WindowsDeleteString( uhs );
-    if (xui) IJsonArray_Release( xui );
-    if (buffer) free( buffer );
-    if (body) free( body );
+    if (!(size = WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, relyingParty, -1, NULL, 0, NULL, NULL ))) return HRESULT_FROM_WIN32( GetLastError() );
+    if (!(relyingPartyA = calloc( 1, size ))) return E_OUTOFMEMORY;
+    WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, relyingParty, -1, relyingPartyA, size, NULL, NULL );
+    if (SUCCEEDED(hr = xsts_authorize( impl, relyingPartyA, TRUE, &authA )) && !(*auth = utf8_to_wide( authA ))) hr = E_OUTOFMEMORY;
+    free( relyingPartyA );
+    free( authA );
     return hr;
 }
 
@@ -1324,8 +1288,23 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
             break;
 
         case XAsyncOp_GetResult:
-            memcpy( data->buffer, context->data, context->dataSize );
+        {
+            char *base = (char *)context->data, *out = data->buffer;
+            memcpy( out, base, context->dataSize );
+            if (context->isUtf16)
+            {
+                XUserGetTokenAndSignatureUtf16Data *result = data->buffer;
+                if (result->token) result->token = (WCHAR *)(out + ((char *)result->token - base));
+                if (result->signature) result->signature = (WCHAR *)(out + ((char *)result->signature - base));
+            }
+            else
+            {
+                XUserGetTokenAndSignatureData *result = data->buffer;
+                if (result->token) result->token = out + (result->token - base);
+                if (result->signature) result->signature = out + (result->signature - base);
+            }
             break;
+        }
 
         case XAsyncOp_DoWork:
             if (FAILED(hr = IUser_GetEndpointInfo( &context->user->IUser_iface, context->url, &info ))) goto complete;
@@ -1333,7 +1312,7 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
 
             if (context->isUtf16)
             {
-                context->dataSize = sizeof(*context->dataUtf16) + (auth ? wcslen( auth ) * sizeof(WCHAR) : 0) + (info.policy ? 104 * sizeof(WCHAR) : 0);
+                context->dataSize = sizeof(*context->dataUtf16) + (auth ? (wcslen( auth ) + 1) * sizeof(WCHAR) : 0) + (info.policy ? 104 * sizeof(WCHAR) : 0);
                 if (!(context->dataUtf16 = calloc( 1, context->dataSize )))
                 {
                     hr = E_OUTOFMEMORY;
@@ -1358,7 +1337,7 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
                         if (!WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, auth, -1, buffer, size, NULL, NULL )) goto error;
                     }
                     context->dataUtf16->signatureCount = 104;
-                    context->dataUtf16->signature = (WCHAR *)(context->dataUtf16 + 1) + (auth ? wcslen( auth ) * sizeof(WCHAR) : 0);
+                    context->dataUtf16->signature = (WCHAR *)(context->dataUtf16 + 1) + (auth ? wcslen( auth ) + 1 : 0);
                     if (FAILED(hr = IUser_GetSignature( &context->user->IUser_iface, info.policy->version, context->method, context->url, (auth ? buffer : ""), min( context->bodySize, info.policy->maxBodyBytes ), context->bodyBuffer, signature ))) goto complete;
                     if (!MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, signature, 104, (WCHAR *)context->dataUtf16->signature, 104 )) goto error;
                 }
@@ -1366,7 +1345,7 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
             else
             {
                 if (auth && !(size = WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, auth, wcslen( auth ), NULL, 0, NULL, NULL ))) goto error;
-                context->dataSize = sizeof(*context->data) + size + (info.policy ? 104 : 0);
+                context->dataSize = sizeof(*context->data) + (auth ? size + 1 : 0) + (info.policy ? 104 : 0);
                 if (!(context->data = calloc( 1, context->dataSize )))
                 {
                     hr = E_OUTOFMEMORY;
@@ -1381,9 +1360,8 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
                 if (info.policy)
                 {
                     context->data->signatureSize = 104;
-                    context->data->signature = (char *)(context->data + 1) + (auth ? size : 0);
+                    context->data->signature = (char *)(context->data + 1) + (auth ? size + 1 : 0);
                     if (FAILED(hr = IUser_GetSignature( &context->user->IUser_iface, info.policy->version, context->method, context->url, (auth ? context->data->token : ""), min( context->bodySize, info.policy->maxBodyBytes ), context->bodyBuffer, (char *)context->data->signature ))) goto complete;
-                    memcpy( (char *)context->data->signature, signature, 104 );
                 }
             }
             goto complete;
@@ -1392,7 +1370,7 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
             hr = HRESULT_FROM_WIN32( GetLastError() );
         complete:
             IXThreadingImpl_XAsyncComplete( xthreading, data->async, hr, SUCCEEDED(hr) ? context->dataSize : 0 );
-            if (FAILED(hr) && context->data) free( context->data );
+            if (FAILED(hr)) { free( context->data ); context->data = NULL; }
             if (buffer) free( buffer );
             if (auth) free( auth );
             hr = S_OK;
@@ -1400,6 +1378,7 @@ static HRESULT WINAPI XUserGetTokenAndSignatureProvider( XAsyncOp op, const XAsy
 
         case XAsyncOp_Cleanup:
             IUser_Release( &context->user->IUser_iface );
+            free( context->data );
             free( context );
             break;
 
@@ -1513,12 +1492,13 @@ static HRESULT WINAPI x_user_XUserGetTokenAndSignatureUtf16Async( IXUserImpl6 *i
 
     /* url */
     ptr = (char *)context + sizeof(*context);
-    if (!WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, url, -1, ptr, urlLen, NULL, NULL )) goto error_win32;
+    if (!WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, url, -1, (context->url = ptr), urlLen, NULL, NULL )) goto error_win32;
     ptr += urlLen;
     /* method */
-    if (!WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, method, -1, ptr, methodLen, NULL, NULL )) goto error_win32;
+    if (!WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, method, -1, (context->method = ptr), methodLen, NULL, NULL )) goto error_win32;
     ptr += methodLen;
     /* headers */
+    context->headers = ptr;
     for (SIZE_T i = 0; i < headerCount; i++)
     {
         if (!(size = WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, headers[i].value, -1, NULL, 0, NULL, NULL ))) goto error_win32;
@@ -2001,7 +1981,7 @@ HRESULT xuser_signed_request( XUserHandle user, const char *method, const char *
     return hr;
 }
 
-HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, char **auth )
+static HRESULT xsts_authorize( XUserHandle user, const char *relyingParty, BOOL title, char **auth )
 {
     static const char url[] = "https://xsts.auth.xboxlive.com/xsts/authorize";
     IJsonObject *object = NULL, *claims = NULL, *identity = NULL;
@@ -2013,32 +1993,25 @@ HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, 
     HRESULT hr, comInit = E_FAIL;
     DWORD status;
 
-    TRACE( "user %p, relyingParty %s.\n", user, debugstr_a( relyingParty ) );
+    TRACE( "user %p, relyingParty %s, title %d.\n", user, debugstr_a( relyingParty ), title );
 
     if (!user->deviceToken || !user->userToken || !user->proofKey) return E_UNEXPECTED;
 
-    EnterCriticalSection( &user->deviceAuthSection );
-    if (user->deviceAuth && GetTickCount64() - user->deviceAuthTime < 3600 * 1000)
-    {
-        *auth = strdup( user->deviceAuth );
-        LeaveCriticalSection( &user->deviceAuthSection );
-        return *auth ? S_OK : E_OUTOFMEMORY;
-    }
-
-    size = strlen( relyingParty ) + strlen( user->deviceToken ) + strlen( user->userToken ) + strlen( user->proofKey ) + 256;
+    if (!title || !user->titleToken) title = FALSE;
+    size = strlen( relyingParty ) + strlen( user->deviceToken ) + strlen( user->userToken ) + strlen( user->proofKey ) + (title ? strlen( user->titleToken ) : 0) + 256;
     if (!(body = calloc( 1, size )))
     {
         hr = E_OUTOFMEMORY;
         goto cleanup;
     }
-    snprintf( body, size, "{\"RelyingParty\":\"%s\",\"TokenType\":\"JWT\",\"Properties\":{\"SandboxId\":\"RETAIL\",\"DeviceToken\":\"%s\",\"UserTokens\":[\"%s\"],\"ProofKey\":%s}}",
-              relyingParty, user->deviceToken, user->userToken, user->proofKey );
+    snprintf( body, size, "{\"RelyingParty\":\"%s\",\"TokenType\":\"JWT\",\"Properties\":{\"SandboxId\":\"RETAIL\",\"DeviceToken\":\"%s\",%s%s%s\"UserTokens\":[\"%s\"],\"ProofKey\":%s}}",
+              relyingParty, user->deviceToken, title ? "\"TitleToken\":\"" : "", title ? user->titleToken : "", title ? "\"," : "", user->userToken, user->proofKey );
 
     if (FAILED(hr = xuser_signed_request( user, "POST", url, NULL, "x-xbl-contract-version: 1\r\nContent-Type: application/json\r\n",
                                           body, strlen( body ), &status, &buffer, &bufferSize ))) goto cleanup;
     if (status != 200)
     {
-        ERR( "xsts device authorization failed, status %lu, body %s.\n", status, debugstr_an( (char *)buffer, bufferSize ) );
+        ERR( "xsts authorization failed, status %lu, body %s.\n", status, debugstr_an( (char *)buffer, bufferSize ) );
         hr = E_FAIL;
         goto cleanup;
     }
@@ -2062,12 +2035,8 @@ HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, 
         goto cleanup;
     }
     snprintf( *auth, size, "XBL3.0 x=%s;%s", uhsA, tokenA );
-    free( user->deviceAuth );
-    user->deviceAuth = strdup( *auth );
-    user->deviceAuthTime = GetTickCount64();
 
 cleanup:
-    LeaveCriticalSection( &user->deviceAuthSection );
     if (identity) IJsonObject_Release( identity );
     if (claims) IJsonObject_Release( claims );
     if (object) IJsonObject_Release( object );
@@ -2079,5 +2048,22 @@ cleanup:
     free( buffer );
     free( body );
     if (SUCCEEDED(comInit)) CoUninitialize();
+    return hr;
+}
+
+HRESULT xuser_device_authorization( XUserHandle user, const char *relyingParty, char **auth )
+{
+    HRESULT hr;
+
+    EnterCriticalSection( &user->deviceAuthSection );
+    if (user->deviceAuth && GetTickCount64() - user->deviceAuthTime < 3600 * 1000)
+        hr = (*auth = strdup( user->deviceAuth )) ? S_OK : E_OUTOFMEMORY;
+    else if (SUCCEEDED(hr = xsts_authorize( user, relyingParty, FALSE, auth )))
+    {
+        free( user->deviceAuth );
+        user->deviceAuth = strdup( *auth );
+        user->deviceAuthTime = GetTickCount64();
+    }
+    LeaveCriticalSection( &user->deviceAuthSection );
     return hr;
 }

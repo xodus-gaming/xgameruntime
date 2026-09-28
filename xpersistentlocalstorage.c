@@ -70,22 +70,61 @@ static ULONG WINAPI x_persistent_local_storage_Release( IXPersistentLocalStorage
     return ref;
 }
 
+static void get_storage_path( char *path, SIZE_T size )
+{
+    char localAppData[MAX_PATH], name[16];
+
+    if (!GetEnvironmentVariableA( "LOCALAPPDATA", localAppData, sizeof(localAppData) )) strcpy( localAppData, "C:\\users\\Public\\AppData\\Local" );
+    snprintf( name, sizeof(name), "%08X", titleId );
+    snprintf( path, size, "%s\\XodusPersistentLocalStorage", localAppData );
+    CreateDirectoryA( path, NULL );
+    snprintf( path, size, "%s\\XodusPersistentLocalStorage\\%s", localAppData, packageFamilyName ? packageFamilyName : name );
+    CreateDirectoryA( path, NULL );
+}
+
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetPath( IXPersistentLocalStorageImpl3 *iface, SIZE_T pathSize, char *path, SIZE_T *pathUsed )
 {
-    FIXME( "iface %p, pathSize %Iu, path %p, pathUsed %p stub!\n", iface, pathSize, path, pathUsed );
-    return E_NOTIMPL;
+    char buffer[MAX_PATH];
+    SIZE_T len;
+
+    TRACE( "iface %p, pathSize %Iu, path %p, pathUsed %p.\n", iface, pathSize, path, pathUsed );
+
+    if (!path) return E_POINTER;
+    get_storage_path( buffer, sizeof(buffer) );
+    len = strlen( buffer ) + 1;
+    if (pathSize < len) return E_NOT_SUFFICIENT_BUFFER;
+    memcpy( path, buffer, len );
+    if (pathUsed) *pathUsed = len;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetPathSize( IXPersistentLocalStorageImpl3 *iface, SIZE_T *pathSize )
 {
-    FIXME( "iface %p, pathSize %p stub!\n", iface, pathSize );
-    return E_NOTIMPL;
+    char buffer[MAX_PATH];
+
+    TRACE( "iface %p, pathSize %p.\n", iface, pathSize );
+
+    if (!pathSize) return E_POINTER;
+    get_storage_path( buffer, sizeof(buffer) );
+    *pathSize = strlen( buffer ) + 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageGetSpaceInfo( IXPersistentLocalStorageImpl3 *iface, XPersistentLocalStorageSpaceInfo *info )
 {
-    FIXME( "iface %p, info %p stub!\n", iface, info );
-    return E_NOTIMPL;
+    ULARGE_INTEGER available, total, free;
+    char buffer[MAX_PATH];
+
+    TRACE( "iface %p, info %p.\n", iface, info );
+
+    if (!info) return E_POINTER;
+    get_storage_path( buffer, sizeof(buffer) );
+    if (!GetDiskFreeSpaceExA( buffer, &available, &total, &free )) return HRESULT_FROM_WIN32( GetLastError() );
+    info->availableFreeBytes = available.QuadPart;
+    info->totalFreeBytes = free.QuadPart;
+    info->usedBytes = 0;
+    info->totalBytes = total.QuadPart;
+    return S_OK;
 }
 
 static HRESULT WINAPI x_persistent_local_storage_XPersistentLocalStorageMountForPackage( IXPersistentLocalStorageImpl3 *iface, const char *packageIdentifier, XPackageMountHandle *mountHandle )
