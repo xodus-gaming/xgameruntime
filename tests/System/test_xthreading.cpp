@@ -26,6 +26,7 @@
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xgameruntimeinit.h>
+#include "CoAwait.hpp"
 
 #define EXPECT_QUEUE_EMPTY(q) { EXPECT_TRUE(XTaskQueueIsEmpty(q, XTaskQueuePort::Completion)); EXPECT_TRUE(XTaskQueueIsEmpty(q, XTaskQueuePort::Work)); }
 
@@ -2915,3 +2916,125 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
 }
 
 // Delayed Race conditions aren't covered as they rely on the internal XTaskQueueSetTestHooks method.
+
+TEST(CoAsync, TestCoAsyncApi)
+{
+    std::cout << "Starting TestCoAsyncApi\n";
+    XAsyncBlock asyncBlock{};
+    memset(&asyncBlock, 0, sizeof(asyncBlock));
+    XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &asyncBlock.queue);
+    {
+        CoXAsync::XAsync<int>::work_callback work = [](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int> {
+            std::cout << "Starting 4431\n";
+            auto r = co_await CoXAsync::XAsync<int>([i = 23](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int>  {
+                std::cout << "Starting nested async with i = " << i << "\n";
+                co_await context.delay(500);
+                std::cout << "afterd nested async with i = " << i << "\n";
+                int ret = 46;
+                std::cout << "end nested async with i = " << i << "\n";
+                co_return ret;
+            }).withQueue(context.getOrCreateQueue());
+            std::cout << "Result from nested async: " << r.get_value() << "\n";
+
+            co_await context.delay(1000);
+
+            std::cout << "Result from nested async: after delay " << r.get_value() << "\n";
+            co_return 42;
+        };
+        CoXAsync::XAsync<int>::begin(&asyncBlock, work);
+    }
+    int i = 0;
+    while(XAsyncGetStatus(&asyncBlock, false) == E_PENDING) {
+        std::cout << "waiting for async completion, iteration " << i++ << "\n";  
+        XTaskQueueDispatch(asyncBlock.queue, XTaskQueuePort::Work, 0);
+    } 
+
+    std::cout << "waiting l0\n";
+    HRESULT hr = XAsyncGetStatus(&asyncBlock, true);
+    ASSERT_EQ(S_OK, hr);
+    int ret = -1;
+    hr = CoXAsync::XAsync<int>::getResult(&asyncBlock, sizeof(int), &ret, nullptr);
+    ASSERT_EQ(S_OK, hr);
+    std::cout << "done " << ret << "\n";
+    ASSERT_EQ(42, ret);
+}
+
+TEST(CoAsync, ReturnSharedPtr)
+{
+    std::cout << "Starting TestCoAsyncApi\n";
+    XAsyncBlock asyncBlock{};
+    memset(&asyncBlock, 0, sizeof(asyncBlock));
+    XTaskQueueCreate(XTaskQueueDispatchMode::Manual, XTaskQueueDispatchMode::Manual, &asyncBlock.queue);
+    {
+        CoXAsync::XAsync<int>::work_callback work = [](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int> {
+            std::cout << "Starting 4431\n";
+            auto r = co_await CoXAsync::XAsync<std::shared_ptr<int>>([i = 23](auto context) -> CoXAsync::coroutine<std::shared_ptr<int>> {
+                std::cout << "Starting nested async with i = " << i << "\n";
+                co_await context.delay(500);
+                std::cout << "afterd nested async with i = " << i << "\n";
+                int ret = 46;
+                std::cout << "end nested async with i = " << i << "\n";
+                co_return std::make_shared<int>(ret);
+            }).withQueue(context.getOrCreateQueue());
+            std::cout << "Result from nested async: " << *r.get_value().get() << "\n";
+
+            co_await context.delay(1000);
+
+            std::cout << "Result from nested async: after delay " << *r.get_value().get() << "\n";
+            co_return 42;
+        };
+        CoXAsync::XAsync<int>::begin(&asyncBlock, work);
+    }
+    int i = 0;
+    while(XAsyncGetStatus(&asyncBlock, false) == E_PENDING) {
+        std::cout << "waiting for async completion, iteration " << i++ << "\n";  
+        XTaskQueueDispatch(asyncBlock.queue, XTaskQueuePort::Work, 0);
+    } 
+
+    std::cout << "waiting l0\n";
+    HRESULT hr = XAsyncGetStatus(&asyncBlock, true);
+    ASSERT_EQ(S_OK, hr);
+    int ret = -1;
+    hr = CoXAsync::XAsync<int>::getResult(&asyncBlock, sizeof(int), &ret, nullptr);
+    ASSERT_EQ(S_OK, hr);
+    std::cout << "done " << ret << "\n";
+    ASSERT_EQ(42, ret);
+}
+
+TEST(CoAsync, DynamicReturn)
+{
+    std::cout << "Starting TestCoAsyncApi\n";
+    XAsyncBlock asyncBlock{};
+    memset(&asyncBlock, 0, sizeof(asyncBlock));
+    {
+        CoXAsync::XAsync<void>::work_callback work = [](CoXAsync::XAsync<void>::Context context) -> CoXAsync::coroutine<void> {
+            std::string token = "Hello World";
+            co_await context.storeResult(token.size(), [&token](void* buffer, size_t size) {
+                if (buffer && size >= token.size()) {
+                    memcpy(buffer, token.data(), token.size());
+                }
+                return S_OK;
+            });
+            co_return S_OK;
+        };
+        CoXAsync::XAsync<void>::begin(&asyncBlock, work);
+    }
+    int i = 0;
+
+    std::cout << "waiting l0\n";
+    HRESULT hr = XAsyncGetStatus(&asyncBlock, true);
+    ASSERT_EQ(S_OK, hr);
+    SIZE_T bufferSize = 0;
+    hr = XAsyncGetResultSize(&asyncBlock, &bufferSize);
+    ASSERT_EQ(S_OK, hr);
+    std::cout << "Required buffer size: " << bufferSize << "\n";
+    std::cout << "waiting l0\n";
+    std::vector<char> ret;
+    ret.resize(bufferSize);
+    hr = CoXAsync::XAsync<void>::getResult(&asyncBlock, bufferSize, ret.data(), nullptr);
+    ASSERT_EQ(S_OK, hr);
+    std::cout << "Required buffer size: " << bufferSize << "\n";
+    std::cout << "waiting l0 "<< ret.size() << " \n";
+    std::cout << "done " << std::string(ret.begin(), ret.end()) << "\n";
+    ASSERT_EQ("Hello World", std::string(ret.begin(), ret.end()));
+}
