@@ -90,6 +90,10 @@ private:
         coroutine<T> coro;
         std::atomic<bool> isCanceled{false};
         store_result_callback store_result;
+
+        ~Data() {
+            coro.destroy();
+        }
     };
 public:
     std::unique_ptr<Data> data;
