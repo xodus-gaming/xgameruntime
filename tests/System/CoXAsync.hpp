@@ -90,8 +90,25 @@ private:
         coroutine<T> coro;
         std::atomic<bool> isCanceled{false};
         store_result_callback store_result;
+        XTaskQueueHandle queue = nullptr;
+
+        XTaskQueueHandle getOrCreateQueue() { 
+            if (!queue) {
+                XTaskQueuePortHandle port;
+                if (FAILED(XTaskQueueGetPort(providerBlock->queue, XTaskQueuePort::Work, &port))) {
+                    return nullptr;
+                }
+                if (FAILED(XTaskQueueCreateComposite(port, port, &queue))) {
+                    return nullptr;
+                }
+            }
+            return queue;
+        }
 
         ~Data() {
+            if (queue) {
+                XTaskQueueCloseHandle(queue);
+            }
             coro.destroy();
         }
     };
