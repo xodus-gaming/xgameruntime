@@ -26,6 +26,7 @@
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xgameruntimeinit.h>
+#include "CoXAsync.hpp"
 
 #define EXPECT_QUEUE_EMPTY(q) { EXPECT_TRUE(XTaskQueueIsEmpty(q, XTaskQueuePort::Completion)); EXPECT_TRUE(XTaskQueueIsEmpty(q, XTaskQueuePort::Work)); }
 
@@ -2915,3 +2916,12 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
 }
 
 // Delayed Race conditions aren't covered as they rely on the internal XTaskQueueSetTestHooks method.
+
+TEST_F(XThreadingTests, TestCoAsync)
+{
+    CoXAsync::XAsync<int> async;
+    async.begin([](XAsyncBlock* block) -> std::variant<int, HRESULT, CoXAsync::XAsync<int>> {
+        // Simulate some asynchronous work
+        return 42;
+    });
+}
