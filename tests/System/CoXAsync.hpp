@@ -88,9 +88,9 @@ template<class T> class XAsync {
 public:
     class Context;
     using work_callback = std::function<coroutine<T>(Context context)>;
-    using store_result_callback = std::function<HRESULT(void* buffer, size_t* size)>;
+    using store_result_callback = std::function<HRESULT(void* buffer, size_t size)>;
 private:
-    XAsyncBlock* asyncBlock;
+    XAsyncBlock* asyncBlock = nullptr;
     struct Data {
         XAsyncBlock asyncBlock;
         XAsyncBlock* providerBlock;
@@ -100,9 +100,9 @@ private:
         std::atomic<bool> isCanceled{false};
         store_result_callback store_result;
     };
-
-    std::unique_ptr<Data> data;
 public:
+    std::unique_ptr<Data> data;
+
     struct switch_to_worker {
         Context context;
         UINT32 delay = 0;
@@ -127,8 +127,8 @@ public:
         void await_resume() { }
     };
     class Context {
-        Data* data;
     public:
+        Data* data;
         Context(Data* block) : data(block) {}
         switch_to_worker switchToWorker() { return { *this, 0 }; }
         switch_to_worker delay(UINT32 d) { return { *this, d }; }
@@ -150,14 +150,14 @@ public:
     }
 
     HRESULT begin() {
-        HRESULT r = XAsyncBegin(asyncBlock, data.get(), (const void*)(HRESULT(XAsync<T>::*)())&XAsync<T>::begin, __FUNCTION__, [](XAsyncOp op, const XAsyncProviderData* data) -> HRESULT {
+        HRESULT r = XAsyncBegin(asyncBlock, data.get(), /*(const void*)(HRESULT(XAsync<T>::*)())&XAsync<T>::begin*/ nullptr, __FUNCTION__, [](XAsyncOp op, const XAsyncProviderData* data) -> HRESULT {
             Data* contextData = static_cast<Data*>(data->context);
             switch (op) {
                 case XAsyncOp::Begin:
                     // Handle begin
                     contextData->providerBlock = data->async;
-                    contextData->coro = contextData->work(Context(&contextData->asyncBlock));
-                    XAsyncSchedule(&contextData->asyncBlock, 0);
+                    contextData->coro = contextData->work(Context(contextData));
+                    XAsyncSchedule(data->async, 0);
                     break;
                 case XAsyncOp::DoWork:
                     // Handle work
@@ -169,7 +169,7 @@ public:
                 case XAsyncOp::GetResult:
                     // Handle get result
                     if (contextData->store_result) {
-                        contextData->store_result(data->buffer, &contextData->required_buffer_size);
+                        contextData->store_result(data->buffer, data->bufferSize);
                     }
                     break;
                 case XAsyncOp::Cancel:
@@ -213,11 +213,12 @@ public:
             return E_FAIL;
         }
         T result;
-        XAsyncGetResult(asyncBlock, &result, resultSize);
+        XAsyncGetResult(asyncBlock, nullptr, resultSize, &result, nullptr);
         return result;
     }
     ~XAsync() {
-        begin();
-    } 
+        if(data.get())
+            begin();
+    }
 };
 }

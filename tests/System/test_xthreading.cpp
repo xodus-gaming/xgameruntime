@@ -2941,3 +2941,34 @@ TEST(CoAsync, TestCoAsync)
     //     return 42;
     // });
 }
+
+TEST(CoAsync, TestCoAsyncApi)
+{
+    std::cout << "Starting TestCoAsyncApi\n";
+    XAsyncBlock asyncBlock{};
+    memset(&asyncBlock, 0, sizeof(asyncBlock));
+    {
+        CoXAsync::XAsync<int>::work_callback work = [](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int> {
+            std::cout << "Starting 4431\n";
+            auto r = co_await CoXAsync::XAsync<int>([](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int>  {
+                std::cout << "Starting l1\n";
+                co_await context.storeResult(sizeof(int), [](void* buffer, size_t size) -> HRESULT {
+                    *static_cast<int*>(buffer) = 45;
+                    return S_OK;
+                });
+                co_return S_OK;
+            });
+            std::cout << "Result from nested async: " << r.get_value() << "\n";
+
+            co_await context.storeResult(sizeof(int), [](void* buffer, size_t size) -> HRESULT {
+                *static_cast<int*>(buffer) = 42;
+                return S_OK;
+            });
+            co_return S_OK;
+        };
+        CoXAsync::XAsync<int> async(&asyncBlock, work);
+    }
+    std::cout << "waiting l0\n";
+    XAsyncGetStatus(&asyncBlock, true);
+    std::cout << "done l0\n";
+}
