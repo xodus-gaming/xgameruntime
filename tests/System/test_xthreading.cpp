@@ -2938,18 +2938,16 @@ TEST(CoAsync, TestCoAsyncApi)
             co_await context.delay(1000);
 
             std::cout << "Result from nested async: after delay " << r.get_value() << "\n";
-
-            // co_await context.storeResult(sizeof(int), [](void* buffer, size_t size) -> HRESULT {
-            //     *static_cast<int*>(buffer) = 45;
-            //     return S_OK;
-            // });
             co_return 42;
         };
         CoXAsync::XAsync<int> async(&asyncBlock, work);
     }
     std::cout << "waiting l0\n";
-    XAsyncGetStatus(&asyncBlock, true);
+    HRESULT hr = XAsyncGetStatus(&asyncBlock, true);
+    ASSERT_EQ(S_OK, hr);
     int ret = -1;
-    XAsyncGetResult(&asyncBlock, nullptr, sizeof(int), &ret, nullptr);
+    hr = XAsyncGetResult(&asyncBlock, nullptr, sizeof(int), &ret, nullptr);
+    ASSERT_EQ(S_OK, hr);
     std::cout << "done " << ret << "\n";
+    ASSERT_EQ(42, ret);
 }
