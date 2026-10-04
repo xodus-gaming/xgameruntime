@@ -2917,11 +2917,27 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
 
 // Delayed Race conditions aren't covered as they rely on the internal XTaskQueueSetTestHooks method.
 
-TEST_F(XThreadingTests, TestCoAsync)
+TEST(CoAsync, TestCoAsync)
 {
-    CoXAsync::XAsync<int> async;
-    async.begin([](XAsyncBlock* block) -> std::variant<int, HRESULT, CoXAsync::XAsync<int>> {
-        // Simulate some asynchronous work
-        return 42;
-    });
+    auto l2 = [i = 55]() -> CoXAsync::awaitable<int> // a lambda that's also a coroutine
+    {
+        std::cout << i << "\n";
+        return CoXAsync::awaitable<int> { 42 };
+    };
+    auto l = [i = 1, &l2]() -> CoXAsync::coroutine<int> // a lambda that's also a coroutine
+    {
+        std::cout << (co_await l2()).get_value() << "\n";
+        co_return 43;// (HRESULT) E_FAIL;
+    };
+    CoXAsync::coroutine<int> h = l();
+
+    std::cout << "Resuming coroutine\n";
+    h.resume();
+    std::cout << "after resume " << h.done() <<"\n";
+    std::cout << "Result: " << h.promise().get_status() << "\n";
+    // CoXAsync::XAsync<int> async;
+    // async.begin([](XAsyncBlock* block) -> std::variant<int, HRESULT, CoXAsync::XAsync<int>> {
+    //     // Simulate some asynchronous work
+    //     return 42;
+    // });
 }
