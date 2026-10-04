@@ -85,19 +85,63 @@ struct promise
 };
 
 template<class T> class XAsync {
+public:
+    class Context;
+    using work_callback = std::function<coroutine<T>(Context context)>;
+    using store_result_callback = std::function<HRESULT(void* buffer, size_t* size)>;
 private:
     XAsyncBlock* asyncBlock;
     struct Data {
         XAsyncBlock asyncBlock;
+        XAsyncBlock* providerBlock;
         // Custom data for the async operation
+        work_callback work;
+        coroutine<T> coro;
+        std::atomic<bool> isCanceled{false};
+        store_result_callback store_result;
     };
 
     std::unique_ptr<Data> data;
 public:
-    XAsync(XAsyncBlock* block) : asyncBlock(block), data(std::make_unique<Data>()) {}
+    struct switch_to_worker {
+        Context context;
+        UINT32 delay = 0;
+        bool await_ready() { return false; }
+        void await_suspend(std::coroutine_handle<> h)
+        {
+            XAsyncSchedule(context.data->providerBlock, delay);
+        }
+        void await_resume() { }
+    };
+    struct store_result {
+        Context context;
+        size_t required_buffer_size;
+        store_result_callback store_result;
 
-    XAsync() : data(std::make_unique<Data>()) {
+        bool await_ready() { return false; }
+        void await_suspend(std::coroutine_handle<> h)
+        {
+            context.data->store_result = std::move(store_result);
+            XAsyncComplete(context.data->providerBlock, S_OK, required_buffer_size);
+        }
+        void await_resume() { }
+    };
+    class Context {
+        Data* data;
+    public:
+        Context(Data* block) : data(block) {}
+        switch_to_worker switchToWorker() { return { *this, 0 }; }
+        switch_to_worker delay(UINT32 d) { return { *this, d }; }
+        store_result storeResult(size_t required_buffer_size, store_result_callback store_result) { return { *this, required_buffer_size, std::move(store_result) }; }
+    };
+
+    XAsync(XAsyncBlock* block, work_callback work) : asyncBlock(block), data(std::make_unique<Data>()) {
+        data->work = std::move(work);
+    }
+
+    XAsync(work_callback work) : data(std::make_unique<Data>()) {
         asyncBlock = &data->asyncBlock;
+        data->work = std::move(work);
     }
 
     XAsync& withQueue(XTaskQueueHandle queue) {
@@ -105,26 +149,32 @@ public:
         return *this;
     }
 
-    XAsync& then(std::function<void(std::variant<T, HRESULT> result)> callback) {
-        // asyncBlock->callback = callback;
-
-        return *this;
-    }
-
-    HRESULT begin(std::function<std::variant<T, HRESULT, XAsync<T>>(XAsyncBlock*)> work) {
-        HRESULT r = XAsyncBegin(asyncBlock, data.get(), nullptr/*(const void*)(HRESULT(XAsync<int>::*)(std::function<std::variant<int, HRESULT, XAsync<int>> (XAsyncBlock *)>))&XAsync<T>::begin*/, __FUNCTION__, [](XAsyncOp op, const XAsyncProviderData* data) -> HRESULT {
+    HRESULT begin() {
+        HRESULT r = XAsyncBegin(asyncBlock, data.get(), (const void*)(HRESULT(XAsync<T>::*)())&XAsync<T>::begin, __FUNCTION__, [](XAsyncOp op, const XAsyncProviderData* data) -> HRESULT {
+            Data* contextData = static_cast<Data*>(data->context);
             switch (op) {
                 case XAsyncOp::Begin:
                     // Handle begin
+                    contextData->providerBlock = data->async;
+                    contextData->coro = contextData->work(Context(&contextData->asyncBlock));
+                    XAsyncSchedule(&contextData->asyncBlock, 0);
                     break;
                 case XAsyncOp::DoWork:
                     // Handle work
+                    contextData->coro.resume();
+                    if (!contextData->coro.done()) {
+                        return E_PENDING;
+                    }
                     break;
                 case XAsyncOp::GetResult:
                     // Handle get result
+                    if (contextData->store_result) {
+                        contextData->store_result(data->buffer, &contextData->required_buffer_size);
+                    }
                     break;
                 case XAsyncOp::Cancel:
                     // Handle cancel
+                    contextData->isCanceled = true;
                     break;
                 case XAsyncOp::Cleanup: {
                     std::unique_ptr<Data> cleanupPtr(static_cast<Data*>(data->context));
@@ -142,5 +192,32 @@ public:
         data.release();
         return S_OK;
     }
+
+    bool await_ready() { return false; }
+    void await_suspend(std::coroutine_handle<> h)
+    {
+        asyncBlock->callback = [](XAsyncBlock* asyncBlock) {
+            std::coroutine_handle<>::from_address(asyncBlock->context).resume();
+        };
+        asyncBlock->context = h.address();
+        this->begin();
+    }
+    Result<T> await_resume() { 
+        HRESULT hr = XAsyncGetStatus(asyncBlock, false);
+        if (FAILED(hr)) {
+            return hr;
+        }
+        size_t resultSize = 0;
+        XAsyncGetResultSize(asyncBlock, &resultSize);
+        if (resultSize != sizeof(T)) {
+            return E_FAIL;
+        }
+        T result;
+        XAsyncGetResult(asyncBlock, &result, resultSize);
+        return result;
+    }
+    ~XAsync() {
+        begin();
+    } 
 };
 }
