@@ -2917,31 +2917,6 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
 
 // Delayed Race conditions aren't covered as they rely on the internal XTaskQueueSetTestHooks method.
 
-TEST(CoAsync, TestCoAsync)
-{
-    auto l2 = [i = 55]() -> CoXAsync::awaitable<int> // a lambda that's also a coroutine
-    {
-        std::cout << i << "\n";
-        return CoXAsync::awaitable<int> { 42 };
-    };
-    auto l = [i = 1, &l2]() -> CoXAsync::coroutine<int> // a lambda that's also a coroutine
-    {
-        std::cout << (co_await l2()).get_value() << "\n";
-        co_return 43;// (HRESULT) E_FAIL;
-    };
-    CoXAsync::coroutine<int> h = l();
-
-    std::cout << "Resuming coroutine\n";
-    h.resume();
-    std::cout << "after resume " << h.done() <<"\n";
-    std::cout << "Result: " << h.promise().get_status() << "\n";
-    // CoXAsync::XAsync<int> async;
-    // async.begin([](XAsyncBlock* block) -> std::variant<int, HRESULT, CoXAsync::XAsync<int>> {
-    //     // Simulate some asynchronous work
-    //     return 42;
-    // });
-}
-
 TEST(CoAsync, TestCoAsyncApi)
 {
     std::cout << "Starting TestCoAsyncApi\n";
@@ -2960,15 +2935,21 @@ TEST(CoAsync, TestCoAsyncApi)
             });
             std::cout << "Result from nested async: " << r.get_value() << "\n";
 
-            co_await context.storeResult(sizeof(int), [](void* buffer, size_t size) -> HRESULT {
-                *static_cast<int*>(buffer) = 42;
-                return S_OK;
-            });
-            co_return S_OK;
+            co_await context.delay(1000);
+
+            std::cout << "Result from nested async: after delay " << r.get_value() << "\n";
+
+            // co_await context.storeResult(sizeof(int), [](void* buffer, size_t size) -> HRESULT {
+            //     *static_cast<int*>(buffer) = 45;
+            //     return S_OK;
+            // });
+            co_return 42;
         };
         CoXAsync::XAsync<int> async(&asyncBlock, work);
     }
     std::cout << "waiting l0\n";
     XAsyncGetStatus(&asyncBlock, true);
-    std::cout << "done l0\n";
+    int ret = -1;
+    XAsyncGetResult(&asyncBlock, nullptr, sizeof(int), &ret, nullptr);
+    std::cout << "done " << ret << "\n";
 }

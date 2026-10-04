@@ -6,33 +6,9 @@
 #include <variant>
 #include <functional>
 
-// template<class T> class Result {
-//     HRESULT hr;
-//     std::optional<T> value;
-//     std::variant<T, HRESULT, XAsync
-// public:
-//     Result(HRESULT hr) : hr(hr) {}
-//     Result(T value) : hr(S_OK), value(value) {}
-//     HRESULT getHr() const { return hr; }
-//     std::optional<T> getValue() const { return value; }
-// };
 #include <coroutine>
 
 namespace CoXAsync {
-
-// struct task
-// {
-//     struct promise_type
-//     {
-//         task get_return_object() { return {}; }
-//         std::suspend_always initial_suspend() { return {
-//             // Call XAsyncBegin? / or is this the caller doing?
-//         }; }
-//         std::suspend_never final_suspend() noexcept { return {}; }
-//         void return_void() {}
-//         void unhandled_exception() {}
-//     };
-// };
 
 template<class T>
 struct promise;
@@ -58,30 +34,46 @@ struct Result
 
 template<class T>
 struct awaitable {
-    Result<T> result = E_FAIL;
-    bool await_ready() { return false; }
-    void await_suspend(std::coroutine_handle<> h)
-    {
-        h.resume();
+    promise<T>* promise = nullptr;
+    bool await_ready() noexcept { return false; }
+    void await_suspend(std::coroutine_handle<> h) noexcept {
+        promise->invoke_continuation();
     }
-    Result<T> await_resume() { return this->result; }
+    void await_resume() noexcept {
+    }
 };
 
 template<class T>
-struct promise
+class promise
 {
-    std::variant<T, HRESULT> result;
+    std::variant<T, HRESULT> result = E_FAIL;
+public:
+    std::function<void(HRESULT, SIZE_T)> continuation;
     coroutine<T> get_return_object() { return { coroutine<T>::from_promise(*this) }; }
     std::suspend_always initial_suspend() noexcept { return {}; }
-    std::suspend_always final_suspend() noexcept { return {}; }
+    awaitable<T> final_suspend() noexcept {
+        return { this };
+    }
     void return_value(T value) { 
         static_assert(!std::is_same_v<T, HRESULT>, "Return type must not match HRESULT");
-        this->result = value; 
+        this->result = value;
     }
-    void return_value(HRESULT hr) { this->result = hr; }
+    void return_value(HRESULT hr) {
+        this->result = hr;
+    }
     void unhandled_exception() {}
     HRESULT get_status() const { return std::holds_alternative<HRESULT>(result) ? std::get<HRESULT>(result) : S_OK; }
     T get_value() const { return std::get<T>(result); }
+    void invoke_continuation() {
+        if (continuation){
+            if (std::holds_alternative<T>(result)) {
+                continuation(S_OK, sizeof(T));
+            }
+            else {
+                continuation(get_status(), 0);
+            }
+        }
+    }
 };
 
 template<class T> class XAsync {
@@ -94,7 +86,6 @@ private:
     struct Data {
         XAsyncBlock asyncBlock;
         XAsyncBlock* providerBlock;
-        // Custom data for the async operation
         work_callback work;
         coroutine<T> coro;
         std::atomic<bool> isCanceled{false};
@@ -154,26 +145,36 @@ public:
             Data* contextData = static_cast<Data*>(data->context);
             switch (op) {
                 case XAsyncOp::Begin:
-                    // Handle begin
                     contextData->providerBlock = data->async;
                     contextData->coro = contextData->work(Context(contextData));
+                    contextData->coro.promise().continuation = [providerBlock = contextData->providerBlock](HRESULT hr, SIZE_T length) {
+                        XAsyncComplete(providerBlock, hr, length);
+                    };
                     XAsyncSchedule(data->async, 0);
                     break;
                 case XAsyncOp::DoWork:
-                    // Handle work
                     contextData->coro.resume();
                     if (!contextData->coro.done()) {
                         return E_PENDING;
                     }
                     break;
                 case XAsyncOp::GetResult:
-                    // Handle get result
                     if (contextData->store_result) {
                         contextData->store_result(data->buffer, data->bufferSize);
+                        contextData->store_result = nullptr;
+                        contextData->coro.resume();
+                    } else if (contextData->coro.done()) {
+                        HRESULT status = contextData->coro.promise().get_status();
+                        if (FAILED(status)) {
+                            return status;
+                        }
+                        new(data->buffer) T(contextData->coro.promise().get_value());
+                        return S_OK;
+                    } else {
+                        return E_PENDING;
                     }
                     break;
                 case XAsyncOp::Cancel:
-                    // Handle cancel
                     contextData->isCanceled = true;
                     break;
                 case XAsyncOp::Cleanup: {
@@ -188,7 +189,6 @@ public:
         if (FAILED(r)) {
             return r;
         }
-        // Keep it alive delegate lifetime to provider
         data.release();
         return S_OK;
     }
