@@ -2927,8 +2927,9 @@ TEST(CoAsync, TestCoAsyncApi)
             std::cout << "Starting 4431\n";
             auto r = co_await CoXAsync::XAsync<int>([](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int>  {
                 std::cout << "Starting l1\n";
-                co_await context.storeResult(sizeof(int), [](void* buffer, size_t size) -> HRESULT {
-                    *static_cast<int*>(buffer) = 45;
+                int ret = 46;
+                co_await context.storeResult(sizeof(int), [&](void* buffer, size_t size) -> HRESULT {
+                    *static_cast<int*>(buffer) = ret;
                     return S_OK;
                 });
                 co_return S_OK;
