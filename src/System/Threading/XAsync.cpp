@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <type_traits>
 
 // Signatures can be anything because these are not exposed to the client.
 #define ASYNC_BLOCK_SIG         0x41535942 // ASYB
