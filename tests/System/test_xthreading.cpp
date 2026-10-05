@@ -2926,6 +2926,11 @@ TEST(CoAsync, TestCoAsyncApi)
     {
         CoXAsync::XAsync<int>::work_callback work = [](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int> {
             std::cout << "Starting 4431\n";
+            co_await CoXAsync::XAsync<void>([i = 23](CoXAsync::XAsync<void>::Context context) -> CoXAsync::coroutine<void>  {
+                std::cout << "Starting nested async with i = " << i << "\n";
+                co_await context.delay(500);
+                co_return 1;
+            }).withQueue(context.getOrCreateQueue());
             auto r = co_await CoXAsync::XAsync<int>([i = 23](CoXAsync::XAsync<int>::Context context) -> CoXAsync::coroutine<int>  {
                 std::cout << "Starting nested async with i = " << i << "\n";
                 co_await context.delay(500);
@@ -3007,7 +3012,7 @@ TEST(CoAsync, DynamicReturn)
     XAsyncBlock asyncBlock{};
     memset(&asyncBlock, 0, sizeof(asyncBlock));
     {
-        CoXAsync::XAsync<void>::work_callback work = [](CoXAsync::XAsync<void>::Context context) -> CoXAsync::coroutine<void> {
+        CoXAsync::XAsync<CoXAsync::dynamic_result>::work_callback work = [](CoXAsync::XAsync<CoXAsync::dynamic_result>::Context context) -> CoXAsync::coroutine<CoXAsync::dynamic_result> {
             std::string token = "Hello World";
             co_await context.storeResult(token.size(), [&token](void* buffer, size_t size) {
                 if (buffer && size >= token.size()) {
@@ -3017,7 +3022,7 @@ TEST(CoAsync, DynamicReturn)
             });
             co_return S_OK;
         };
-        CoXAsync::XAsync<void>::begin(&asyncBlock, work);
+        CoXAsync::XAsync<CoXAsync::dynamic_result>::begin(&asyncBlock, work);
     }
     int i = 0;
 
@@ -3031,7 +3036,7 @@ TEST(CoAsync, DynamicReturn)
     std::cout << "waiting l0\n";
     std::vector<char> ret;
     ret.resize(bufferSize);
-    hr = CoXAsync::XAsync<void>::getResult(&asyncBlock, bufferSize, ret.data(), nullptr);
+    hr = CoXAsync::XAsync<CoXAsync::dynamic_result>::getResult(&asyncBlock, bufferSize, ret.data(), nullptr);
     ASSERT_EQ(S_OK, hr);
     std::cout << "Required buffer size: " << bufferSize << "\n";
     std::cout << "waiting l0 "<< ret.size() << " \n";

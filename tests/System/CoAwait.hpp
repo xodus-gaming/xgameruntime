@@ -14,14 +14,12 @@ template<class T>
 struct promise;
 
 template<class T>
-struct coroutine : std::coroutine_handle<promise<T>>
-{
+struct coroutine : std::coroutine_handle<promise<T>> {
     using promise_type = CoXAsync::promise<T>;
 };
 
 template<class T>
-struct Result
-{
+struct Result {
     std::variant<T, HRESULT> result;
     Result(T value) { 
         static_assert(!std::is_same_v<T, HRESULT>, "Return type must not match HRESULT");
@@ -30,6 +28,13 @@ struct Result
     Result(HRESULT hr) { this->result = hr; }
     HRESULT get_status() const { return std::holds_alternative<HRESULT>(result) ? std::get<HRESULT>(result) : S_OK; }
     T get_value() const { return std::get<T>(result); }
+};
+
+template<>
+struct Result<void> {
+    HRESULT status = E_FAIL;
+    Result(HRESULT hr) { this->status = hr; }
+    HRESULT get_status() const { return status; }
 };
 
 template<class T>
@@ -44,8 +49,7 @@ struct awaitable {
 };
 
 template<class T>
-class promise
-{
+class promise {
     std::variant<T, HRESULT> result = E_FAIL;
 public:
     std::function<void(HRESULT, SIZE_T)> continuation;
@@ -68,8 +72,7 @@ public:
         if (continuation){
             if (std::holds_alternative<T>(result)) {
                 continuation(S_OK, sizeof(T));
-            }
-            else {
+            } else {
                 continuation(get_status(), 0);
             }
         }
@@ -77,8 +80,7 @@ public:
 };
 
 template<>
-class promise<void>
-{
+class promise<void> {
     HRESULT result = E_FAIL;
 public:
     std::function<void(HRESULT, SIZE_T)> continuation;
@@ -99,15 +101,19 @@ public:
     }
 };
 
+struct dynamic_result {};
+
 template<class T> class XAsync {
 public:
     class Context;
     using work_callback = std::function<coroutine<T>(Context context)>;
     using store_result_callback = std::function<HRESULT(void* buffer, size_t size)>;
 private:
-    XAsyncBlock* asyncBlock = nullptr;
+    // Ensure self managed asyncBlock keeps alive until this object is destroyed
+    std::shared_ptr<XAsyncBlock> asyncBlock = nullptr;
     struct Data {
-        XAsyncBlock asyncBlock;
+        // Ensure self managed asyncBlock keeps alive until the asynchronous operation completes
+        std::shared_ptr<XAsyncBlock> asyncBlock;
         XAsyncBlock* providerBlock;
         work_callback work;
         coroutine<T> coro;
@@ -136,54 +142,58 @@ private:
         }
     };
 
-    HRESULT begin() {
-        HRESULT r = XAsyncBegin(asyncBlock, data.get(), reinterpret_cast<const void*>(identity), __FUNCTION__, [](XAsyncOp op, const XAsyncProviderData* data) -> HRESULT {
-            Data* contextData = static_cast<Data*>(data->context);
-            switch (op) {
-                case XAsyncOp::Begin:
-                    contextData->providerBlock = data->async;
-                    contextData->coro = contextData->work(Context(contextData));
-                    contextData->coro.promise().continuation = [providerBlock = contextData->providerBlock](HRESULT hr, SIZE_T length) {
-                        XAsyncComplete(providerBlock, hr, length);
-                    };
-                    XAsyncSchedule(data->async, 0);
-                    break;
-                case XAsyncOp::DoWork:
-                    contextData->coro.resume();
-                    if (!contextData->coro.done()) {
-                        return E_PENDING;
-                    }
-                    break;
-                case XAsyncOp::GetResult:
-                    if (std::is_same_v<T, void> && contextData->store_result) {
-                        contextData->store_result(data->buffer, data->bufferSize);
-                        contextData->store_result = nullptr;
-                        contextData->coro.resume();
-                    } else if (contextData->coro.done()) {
-                        HRESULT status = contextData->coro.promise().get_status();
-                        if (FAILED(status)) {
-                            return status;
-                        }
-                        if constexpr (!std::is_same_v<T, void>) {
-                            *static_cast<T*>(data->buffer) = std::move(contextData->coro.promise().get_value());
-                        }
-                        return S_OK;
-                    } else {
-                        return E_PENDING;
-                    }
-                    break;
-                case XAsyncOp::Cancel:
-                    contextData->isCanceled = true;
-                    break;
-                case XAsyncOp::Cleanup: {
-                    std::unique_ptr<Data> cleanupPtr(static_cast<Data*>(data->context));
-                    break;
+    static HRESULT provider(XAsyncOp op, const XAsyncProviderData* data) {
+        Data* contextData = static_cast<Data*>(data->context);
+        switch (op) {
+            case XAsyncOp::Begin:
+                contextData->providerBlock = data->async;
+                contextData->coro = contextData->work(Context(contextData));
+                contextData->coro.promise().continuation = [providerBlock = contextData->providerBlock](HRESULT hr, SIZE_T length) {
+                    XAsyncComplete(providerBlock, hr, length);
+                };
+                XAsyncSchedule(data->async, 0);
+                break;
+            case XAsyncOp::DoWork:
+                contextData->coro.resume();
+                if (!contextData->coro.done()) {
+                    return E_PENDING;
                 }
-                default:
-                    break;
+                break;
+            case XAsyncOp::GetResult:
+                if (std::is_same_v<T, dynamic_result> && contextData->store_result) {
+                    contextData->store_result(data->buffer, data->bufferSize);
+                    contextData->store_result = nullptr;
+                    contextData->coro.resume();
+                } else if (contextData->coro.done()) {
+                    HRESULT status = contextData->coro.promise().get_status();
+                    if (FAILED(status)) {
+                        return status;
+                    }
+                    if constexpr (!std::is_same_v<T, void> && !std::is_same_v<T, dynamic_result>) {
+                        *static_cast<T*>(data->buffer) = std::move(contextData->coro.promise().get_value());
+                    }
+                    return S_OK;
+                } else {
+                    return E_PENDING;
+                }
+                break;
+            case XAsyncOp::Cancel:
+                contextData->isCanceled = true;
+                break;
+            case XAsyncOp::Cleanup: {
+                std::unique_ptr<Data> cleanupPtr(static_cast<Data*>(data->context));
+                break;
             }
-            return S_OK;
-        });
+            default:
+                break;
+        }
+        return S_OK;
+    }
+
+    static constexpr auto identity = provider;
+
+    HRESULT begin() {
+        HRESULT r = XAsyncBegin(asyncBlock.get(), data.get(), reinterpret_cast<const void*>(identity), __FUNCTION__, provider);
         if (FAILED(r)) {
             return r;
         }
@@ -191,7 +201,7 @@ private:
         return S_OK;
     }
 
-    XAsync(XAsyncBlock* block, work_callback work) : asyncBlock(block), data(std::make_unique<Data>()) {
+    XAsync(XAsyncBlock* block, work_callback work) : asyncBlock(std::shared_ptr<XAsyncBlock>(block, [](XAsyncBlock*) { /* not owning this block */})), data(std::make_unique<Data>()) {
         data->work = std::move(work);
     }
     std::unique_ptr<Data> data;
@@ -216,7 +226,6 @@ public:
             bool await_ready() { return false; }
             void await_suspend(std::coroutine_handle<> h) {
                 context.data->store_result = std::move(store_result);
-                std::cout << "Storing result with required buffer size: " << required_buffer_size << "\n";
                 XAsyncComplete(context.data->providerBlock, S_OK, required_buffer_size);
             }
             void await_resume() { }
@@ -226,7 +235,7 @@ public:
         switch_to_worker switchToWorker() { return { *this, 0 }; }
         switch_to_worker delay(UINT32 d) { return { *this, d }; }
         store_result storeResult(size_t required_buffer_size, store_result_callback store_result) {
-            static_assert(std::is_same_v<T, void>, "Only void return type is supported for storeResult");
+            static_assert(std::is_same_v<T, dynamic_result>, "Only dynamic_result return type is supported for storeResult");
             return { *this, required_buffer_size, std::move(store_result) };
         }
         XTaskQueueHandle getOrCreateQueue() {
@@ -238,53 +247,62 @@ public:
         return XAsync<T>(block, std::move(work)).begin();
     }
 
-    static constexpr HRESULT(*identity)(XAsyncBlock* block, work_callback work) = &XAsync<T>::begin;
-
     template<class Y>
     static HRESULT getResult(XAsyncBlock* block, SIZE_T bufferSize, Y *buffer, SIZE_T *bufferUsed) {
-        static_assert(std::is_same_v<T, void> && (std::is_same_v<Y, void> || std::is_trivially_copyable_v<Y> && sizeof(Y) == 1) || std::is_same_v<T, Y> && std::is_trivially_copyable_v<Y>, "This type must be trivially copyable and match the expected type");
+        static_assert(std::is_same_v<T, dynamic_result> && (std::is_same_v<Y, void> || std::is_trivially_copyable_v<Y> && sizeof(Y) == 1) || std::is_same_v<T, Y> && std::is_trivially_copyable_v<Y>, "This type must be trivially copyable and match the expected type");
         return XAsyncGetResult(block, reinterpret_cast<const void*>(identity), bufferSize, buffer, bufferUsed);
     }
 
     XAsync(work_callback work) : data(std::make_unique<Data>()) {
-        static_assert(sizeof(T) > 0, "T must have a non-zero size");
-        asyncBlock = &data->asyncBlock;
+        static_assert(!std::is_same_v<T, dynamic_result>, "Dynamic results are only supported for C facing async apis, use c++ types instead");
+        asyncBlock = data->asyncBlock = std::make_shared<XAsyncBlock>();
         data->work = std::move(work);
     }
 
     XAsync& withQueue(XTaskQueueHandle queue) {
+        static_assert(!std::is_same_v<T, dynamic_result>, "Dynamic results are not supported for withQueue");
         asyncBlock->queue = queue;
         return *this;
     }
 
-    bool await_ready() { return false; }
-    void await_suspend(std::coroutine_handle<> h)
-    {
+    bool await_ready() {
+        static_assert(!std::is_same_v<T, dynamic_result>, "Dynamic results are not supported for await_ready");
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> h) {
+        static_assert(!std::is_same_v<T, dynamic_result>, "Dynamic results are not supported for await_suspend");
         asyncBlock->callback = [](XAsyncBlock* asyncBlock) {
             std::coroutine_handle<>::from_address(asyncBlock->context).resume();
         };
         asyncBlock->context = h.address();
         this->begin();
     }
+
     Result<T> await_resume() { 
-        HRESULT hr = XAsyncGetStatus(asyncBlock, false);
+        static_assert(!std::is_same_v<T, dynamic_result>, "Dynamic results are not supported for await_resume");
+        HRESULT hr = XAsyncGetStatus(asyncBlock.get(), false);
         if (FAILED(hr)) {
             return hr;
         }
-        size_t resultSize = 0;
-        hr = XAsyncGetResultSize(asyncBlock, &resultSize);
-        if (FAILED(hr)) {
-            return hr;
+        if constexpr (std::is_same_v<T, void>) {
+            return 0;
+        } else {
+            size_t resultSize = 0;
+            hr = XAsyncGetResultSize(asyncBlock.get(), &resultSize);
+            if (FAILED(hr)) {
+                return hr;
+            }
+            if (resultSize != sizeof(T)) {
+                return E_FAIL;
+            }
+            T result;
+            hr = XAsyncGetResult(asyncBlock.get(), reinterpret_cast<const void*>(identity), resultSize, &result, nullptr);
+            if (FAILED(hr)) {
+                return hr;
+            }
+            return std::move(result);
         }
-        if (resultSize != sizeof(T)) {
-            return E_FAIL;
-        }
-        T result;
-        hr = XAsyncGetResult(asyncBlock, reinterpret_cast<const void*>(identity), resultSize, &result, nullptr);
-        if (FAILED(hr)) {
-            return hr;
-        }
-        return std::move(result);
     }
 };
 }
