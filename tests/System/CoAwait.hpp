@@ -249,7 +249,7 @@ public:
 
     template<class Y>
     static HRESULT getResult(XAsyncBlock* block, SIZE_T bufferSize, Y *buffer, SIZE_T *bufferUsed) {
-        static_assert(std::is_same_v<T, dynamic_result> && (std::is_same_v<Y, void> || std::is_trivially_copyable_v<Y> && sizeof(Y) == 1) || std::is_same_v<T, Y> && std::is_trivially_copyable_v<Y>, "This type must be trivially copyable and match the expected type");
+        static_assert(std::is_same_v<T, dynamic_result> && (std::is_same_v<Y, void> || std::is_same_v<Y, unsigned char> || std::is_same_v<Y, char>) || std::is_same_v<T, Y> && std::is_trivially_copyable_v<Y>, "This type must be trivially copyable and match the expected type");
         return XAsyncGetResult(block, reinterpret_cast<const void*>(identity), bufferSize, buffer, bufferUsed);
     }
 
