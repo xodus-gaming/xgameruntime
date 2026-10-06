@@ -23,7 +23,10 @@
 #ifndef XGAMERUNTIME_LOGGING_H
 #define XGAMERUNTIME_LOGGING_H
 
+#ifdef __MINGW32__
+// pid_t definition for MinGW
 #include <unistd.h>
+#endif
 #include <stdio.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -152,7 +155,7 @@ struct Exception final : std::runtime_error
 
     explicit Exception( HRESULT s, const std::string &message ): std::runtime_error( "Unhandled Exception: " + std::to_string(s) + " with message " + message ), status(s), msg(message)
     {
-        ERR( "Exception %d within C++ code with message %s.\n", status, message.c_str() );
+        ERR( "Exception %#lx within C++ code with message \"%s\".\n", status, message.c_str() );
     }
 };
 

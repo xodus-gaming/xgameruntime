@@ -224,12 +224,10 @@ public:
         return S_OK;
     }
 
-    //  NOTE: Padding function here is most likely XTaskQueueUninitialize from libHttpClient. More testing needs to be conducted.
-    // Since this is a private/undocumented function, implementation is not necessary.
-    HRESULT WINAPI __PADDING_2__() override
+    BOOLEAN WINAPI XTaskQueueIsEmpty( XTaskQueueHandle queue, XTaskQueuePort port ) override
     {
-        WARN("padding function called!\n");
-        return E_NOTIMPL;
+        TRACE("queue %p, port %d\n", queue, port);
+        return ::XTaskQueueIsEmpty( queue, port );
     }
 
     void WINAPI XThreadAssertNotTimeSensitive() override

@@ -91,7 +91,7 @@ interface IXThreadingImpl : IUnknown
     BOOLEAN XTaskQueueGetCurrentProcessTaskQueue( [out] XTaskQueueHandle *queue );
     void    XTaskQueueSetCurrentProcessTaskQueue( [in] XTaskQueueHandle queue );
     HRESULT XThreadSetTimeSensitive( [in] BOOLEAN isTimeSensitiveThread );
-    HRESULT __PADDING_2__();
+    BOOLEAN XTaskQueueIsEmpty( [in] XTaskQueueHandle queue, [in] XTaskQueuePort port );
     void    XThreadAssertNotTimeSensitive();
     BOOLEAN XThreadIsTimeSensitive();
 }

@@ -22,11 +22,12 @@
 
 #include <private/logging.h>
 #include <private/statics.h>
-#include <private/env.h>
 
 #include <stdio.h>
 #include <windows.h>
 #include <io.h>
+
+#include <private/env.h>
 
 static LPCSTR debugLevels[] =
 {

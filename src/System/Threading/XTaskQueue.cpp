@@ -1846,6 +1846,25 @@ BOOLEAN XTaskQueueDispatch(
     return portContext->GetPort()->Dispatch(portContext.get(), timeoutInMs);
 }
 
+BOOLEAN XTaskQueueIsEmpty(
+    XTaskQueueHandle queue,
+    XTaskQueuePort port
+) {
+    referenced_ptr<ITaskQueue> aq(GetQueue(queue));
+    if (aq == nullptr)
+    {
+        return false;
+    }
+
+    referenced_ptr<ITaskQueuePortContext> portContext;
+    if (FAILED(aq->GetPortContext(port, portContext.address_of())))
+    {
+        return false;
+    }
+
+    return portContext->GetPort()->IsEmpty();
+}
+
 void XTaskQueueCloseHandle(
     XTaskQueueHandle queue
 ) {
