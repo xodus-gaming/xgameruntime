@@ -4,7 +4,7 @@ add_executable(test_xgameruntime
 
 target_link_libraries(test_xgameruntime
         PRIVATE
-        xgameruntime
+        xgameruntime-impl
         GTest::gtest_main )
 
 target_link_options(test_xgameruntime PRIVATE

@@ -23,7 +23,10 @@
 #ifndef XGAMERUNTIME_LOGGING_H
 #define XGAMERUNTIME_LOGGING_H
 
+#ifdef __MINGW32__
+// pid_t definition for MinGW
 #include <unistd.h>
+#endif
 #include <stdio.h>
 #include <stdarg.h>
 #include <assert.h>

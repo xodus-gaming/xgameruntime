@@ -20,9 +20,9 @@
  * THE SOFTWARE.
  */
 
-#include <private/env.h>
 #include <windows.h>
 #include <processenv.h>
+#include <private/env.h>
 
 HRESULT xgameruntime_get_env(
     LPCSTR name,

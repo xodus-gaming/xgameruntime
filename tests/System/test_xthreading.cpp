@@ -31,7 +31,7 @@
 
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
-std::atomic<uint32_t> s_AsyncLibGlobalStateCount{0};
+static std::atomic<uint32_t> s_AsyncLibGlobalStateCount;
 
 template <typename T>
 class AutoRef

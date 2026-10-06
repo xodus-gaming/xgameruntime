@@ -25,5 +25,15 @@ set(IDL_BINARY_DIR
 
 include_directories( ${PROJECT_SOURCE_DIR}/include )
 
+if(ENABLE_TESTS)
+    enable_testing()
+    message( STATUS "Tests are enabled." )
+    add_subdirectory(
+            ${CMAKE_SOURCE_DIR}/external/googletest
+            ${CMAKE_BINARY_DIR}/external/googletest
+            EXCLUDE_FROM_ALL )
+    add_subdirectory( tests )
+endif()
+
 add_subdirectory( libs )
 add_subdirectory( src )
