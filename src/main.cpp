@@ -102,6 +102,10 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     {
         return x_threading_impl->QueryInterface( iid, out );
     }
+    if ( IsEqualGUID( clsid, CLSID_XUserImpl ) )
+    {
+        return x_user_impl->QueryInterface( iid, out );
+    }
 
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
     return HRESULT_FROM_WIN32( ERROR_NOT_SUPPORTED );

@@ -60,7 +60,8 @@ add_library(xgameruntime-impl STATIC
 
 # System
 target_sources(xgameruntime-impl PRIVATE
-        System/XThreading.cpp )
+        System/XThreading.cpp
+        System/XUser.cpp )
 
 # System/Threading (based on libHttpClient)
 target_sources(xgameruntime-impl PRIVATE

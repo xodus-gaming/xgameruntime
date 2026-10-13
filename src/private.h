@@ -62,5 +62,6 @@
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
 extern IXThreadingImpl *x_threading_impl;
+extern IXUserImpl *x_user_impl;
 
 #endif
