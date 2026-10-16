@@ -25,6 +25,61 @@ set(IDL_BINARY_DIR
 
 include_directories( ${PROJECT_SOURCE_DIR}/include )
 
+# ------------------------------------------------------------
+# IDL generation
+# ------------------------------------------------------------
+
+file(GLOB_RECURSE IDL_FILES
+        CONFIGURE_DEPENDS
+        ${IDL_SOURCE_DIR}/*.idl )
+
+set(IDL_GENERATED_FILES)
+
+foreach(IDL_FILE ${IDL_FILES})
+    file(RELATIVE_PATH IDL_RELATIVE_PATH
+            ${IDL_SOURCE_DIR}
+            ${IDL_FILE} )
+
+    get_filename_component(IDL_RELATIVE_DIR
+            ${IDL_RELATIVE_PATH}
+            DIRECTORY )
+
+    get_filename_component(IDL_NAME
+            ${IDL_RELATIVE_PATH}
+            NAME_WE )
+
+    set(GENERATED_DIR
+            ${IDL_BINARY_DIR}/${IDL_RELATIVE_DIR} )
+
+    set(GENERATED_H
+            ${GENERATED_DIR}/${IDL_NAME}.h )
+
+    add_custom_command(
+            OUTPUT
+            ${GENERATED_H}
+
+            COMMAND
+            ${CMAKE_COMMAND} -E make_directory
+            ${GENERATED_DIR}
+
+            COMMAND
+            ${WIDL}
+            -h
+            -o ${GENERATED_H}
+            ${IDL_FILE}
+
+            DEPENDS
+            ${IDL_FILE}
+
+            VERBATIM )
+
+    list(APPEND IDL_GENERATED_FILES
+            ${GENERATED_H})
+endforeach()
+
+add_custom_target(xgameruntime-idl
+        DEPENDS ${IDL_GENERATED_FILES} )
+
 if(ENABLE_TESTS)
     enable_testing()
     message( STATUS "Tests are enabled." )
@@ -35,5 +90,15 @@ if(ENABLE_TESTS)
     add_subdirectory( tests )
 endif()
 
-add_subdirectory( libs )
+# ---------------------------------------------------------------------------
+# Versioning
+# ---------------------------------------------------------------------------
+configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/version.h.in
+        ${CMAKE_CURRENT_BINARY_DIR}/include/version.h
+        @ONLY )
+
+include_directories( ${PROJECT_SOURCE_DIR}/include )
+
 add_subdirectory( src )
+add_subdirectory( libs )

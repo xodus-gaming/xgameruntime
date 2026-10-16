@@ -76,6 +76,8 @@ typedef enum XGameRuntimeFeature
     XGameRuntimeFeature_XGameStreaming,
 } XGameRuntimeFeature;
 
+cpp_quote("#endif")
+
 [
     local,
     object,
@@ -93,5 +95,3 @@ coclass XGameRuntimeFeatureImpl
 {
     [default] interface IXGameRuntimeFeatureImpl;
 }
-
-cpp_quote("#endif")

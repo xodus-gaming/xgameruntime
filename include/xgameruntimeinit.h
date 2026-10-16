@@ -46,6 +46,13 @@ struct XGameRuntimeOptions
     const char* gameConfig;
 };
 
+typedef struct _INITIALIZE_OPTIONS
+{
+    UINT32 unknown;
+    BOOLEAN isInlineConfig;
+    const char *gameConfig;
+} INITIALIZE_OPTIONS;
+
 HRESULT __stdcall XGameRuntimeInitialize();
 HRESULT __stdcall XGameRuntimeInitializeWithOptions( const XGameRuntimeOptions* options );
 void __stdcall XGameRuntimeUninitialize();

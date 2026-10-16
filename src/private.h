@@ -44,6 +44,7 @@
 
 #include <xgameerr.h>
 #include <xsystem.h>
+#include <xgameruntimeinit.h>
 #include <xgameruntimefeature.h>
 #include <xnetworking.h>
 #include <xuser.h>

@@ -4,7 +4,7 @@ add_executable(test_xgameruntime
 
 target_link_libraries(test_xgameruntime
         PRIVATE
-        xgameruntime-impl
+        libxgameruntime
         GTest::gtest_main )
 
 target_link_options(test_xgameruntime PRIVATE
@@ -20,6 +20,7 @@ include( GoogleTest )
 
 target_include_directories(test_xgameruntime
         PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
 
 # For discovery purposes.
