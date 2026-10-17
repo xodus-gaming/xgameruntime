@@ -38,6 +38,10 @@
 // Bug: __WINESRC__ is not defined in C++ contexts.
 #define __WINESRC__ 1
 #include <cstdint>
+
+#define EXTERN_C extern "C"
+#else
+#define EXTERN_C extern
 #endif
 
 #define WIDL_EXPLICIT_AGGREGATE_RETURNS
@@ -50,7 +54,9 @@
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>
+#include <xaccessibility.h>
 
+#ifndef CINTERFACE
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
 #include "windows.foundation.h"
@@ -58,9 +64,13 @@
 #include "windows.globalization.h"
 #define WIDL_using_Windows_System_Profile
 #include "windows.system.profile.h"
+#endif
 
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
-extern IXThreadingImpl *x_threading_impl;
+EXTERN_C IXThreadingImpl *x_threading_impl;
+EXTERN_C IXAccessibilityImpl *x_accessibility_impl;
+
+#undef EXTERN_C
 
 #endif
