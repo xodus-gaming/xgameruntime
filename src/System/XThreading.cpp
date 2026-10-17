@@ -220,7 +220,7 @@ public:
 
     HRESULT WINAPI XThreadSetTimeSensitive( BOOLEAN isTimeSensitiveThread ) override
     {
-        this->isTimeSensitiveThread = isTimeSensitiveThread;
+        XThreadingImpl::isTimeSensitiveThread = isTimeSensitiveThread;
         return S_OK;
     }
 
@@ -232,19 +232,21 @@ public:
 
     void WINAPI XThreadAssertNotTimeSensitive() override
     {
-        if ( isTimeSensitiveThread )
+        if ( XThreadingImpl::isTimeSensitiveThread )
             assert( false );
     }
 
     BOOLEAN WINAPI XThreadIsTimeSensitive() override
     {
-        return isTimeSensitiveThread;
+        return XThreadingImpl::isTimeSensitiveThread;
     }
 
 private:
-    BOOLEAN isTimeSensitiveThread{ false };
+    static thread_local BOOLEAN isTimeSensitiveThread;
     std::atomic_long ref{ 1 };
 };
+
+thread_local BOOLEAN XThreadingImpl::isTimeSensitiveThread = FALSE;
 
 static XThreadingImpl g_x_threading;
 

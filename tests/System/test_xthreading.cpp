@@ -2915,3 +2915,20 @@ TEST_F(XThreadingTests, VerifyCompositeTerminationRaceRepro)
 }
 
 // Delayed Race conditions aren't covered as they rely on the internal XTaskQueueSetTestHooks method.
+
+TEST_F(XThreadingTests, VerifyTimeSensitiveThreadIsThreadLocal)
+{
+    XThreadSetTimeSensitive(true);
+    EXPECT_TRUE(XThreadIsTimeSensitive());
+
+    std::thread otherThread([]{
+        // This new thread should not be time sensitive
+        EXPECT_FALSE(XThreadIsTimeSensitive());
+    });
+    otherThread.join();
+
+    EXPECT_TRUE(XThreadIsTimeSensitive());
+
+    XThreadSetTimeSensitive(false);
+    EXPECT_FALSE(XThreadIsTimeSensitive());
+}
