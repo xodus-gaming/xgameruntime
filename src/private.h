@@ -65,5 +65,6 @@
 
 extern IXThreadingImpl *x_threading_impl;
 extern IXGameImpl3 *x_game_impl;
+extern IXUserImpl *x_user_impl;
 
 #endif
