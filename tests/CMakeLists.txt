@@ -1,5 +1,6 @@
 add_executable(test_xgameruntime
         System/test_xthreading.cpp
+        System/test_coxasync.cpp
         test_fixtures.cpp)
 
 target_link_libraries(test_xgameruntime
