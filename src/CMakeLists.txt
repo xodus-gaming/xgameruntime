@@ -20,6 +20,11 @@ target_sources(xgameruntime-impl PRIVATE
         System/Threading/XAsync.cpp
         System/Threading/XTaskQueue.cpp )
 
+# Xodus
+target_sources(xgameruntime-impl PRIVATE
+        Xodus/IpcFraming.cpp
+        Xodus/XodusXml.cpp )
+
 target_link_libraries( xgameruntime-impl PRIVATE
         xgameruntime-common )
 

@@ -1,6 +1,14 @@
 add_executable(test_xgameruntime
         System/test_xthreading.cpp
+        Xodus/test_ipcframing.cpp
+        Xodus/test_xodusxml.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/IpcFraming.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/XodusXml.cpp
         test_fixtures.cpp)
+
+target_compile_definitions(test_xgameruntime
+        PRIVATE
+        XODUS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Xodus/fixtures" )
 
 target_link_libraries(test_xgameruntime
         PRIVATE
@@ -21,6 +29,8 @@ include( GoogleTest )
 target_include_directories(test_xgameruntime
         PRIVATE
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
 
 # For discovery purposes.
