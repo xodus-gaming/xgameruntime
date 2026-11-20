@@ -23,7 +23,13 @@ target_sources(xgameruntime-impl PRIVATE
 # Xodus
 target_sources(xgameruntime-impl PRIVATE
         Xodus/IpcFraming.cpp
+        Xodus/UnixTransport.cpp
         Xodus/XodusXml.cpp )
+
+# Host library for the xodus socket, deployed next to xgameruntime.dll
+xodus_add_host_target( xgameruntime-unix SHARED
+        OUTPUT ${CMAKE_BINARY_DIR}/bin/xgameruntime-unix.so
+        SOURCES ${PROJECT_SOURCE_DIR}/unix/xodus_socket.c )
 
 target_link_libraries( xgameruntime-impl PRIVATE
         xgameruntime-common )
