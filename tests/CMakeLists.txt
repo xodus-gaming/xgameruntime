@@ -2,9 +2,12 @@ add_executable(test_xgameruntime
         System/test_xthreading.cpp
         Xodus/test_ipcframing.cpp
         Xodus/test_unixtransport.cpp
+        Xodus/test_xodusclient.cpp
+        Xodus/test_xodusclient_integration.cpp
         Xodus/test_xodusxml.cpp
         ${CMAKE_SOURCE_DIR}/src/Xodus/IpcFraming.cpp
         ${CMAKE_SOURCE_DIR}/src/Xodus/UnixTransport.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/XodusClient.cpp
         ${CMAKE_SOURCE_DIR}/src/Xodus/XodusXml.cpp
         test_fixtures.cpp)
 

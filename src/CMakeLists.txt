@@ -24,6 +24,7 @@ target_sources(xgameruntime-impl PRIVATE
 target_sources(xgameruntime-impl PRIVATE
         Xodus/IpcFraming.cpp
         Xodus/UnixTransport.cpp
+        Xodus/XodusClient.cpp
         Xodus/XodusXml.cpp )
 
 # Host library for the xodus socket, deployed next to xgameruntime.dll
