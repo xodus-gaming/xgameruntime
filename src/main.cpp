@@ -102,6 +102,10 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     {
         return x_threading_impl->QueryInterface( iid, out );
     }
+    else if ( IsEqualGUID( clsid, CLSID_XGameRuntimeFeatureImpl ) )
+    {
+        return x_game_runtime_feature->QueryInterface( iid, out );
+    }
 
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
     return REGDB_E_CLASSNOTREG;
