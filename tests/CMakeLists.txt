@@ -1,6 +1,19 @@
 add_executable(test_xgameruntime
         System/test_xthreading.cpp
+        Xodus/test_ipcframing.cpp
+        Xodus/test_unixtransport.cpp
+        Xodus/test_xodusclient.cpp
+        Xodus/test_xodusclient_integration.cpp
+        Xodus/test_xodusxml.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/IpcFraming.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/UnixTransport.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/XodusClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/Xodus/XodusXml.cpp
         test_fixtures.cpp)
+
+target_compile_definitions(test_xgameruntime
+        PRIVATE
+        XODUS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Xodus/fixtures" )
 
 target_link_libraries(test_xgameruntime
         PRIVATE
@@ -21,6 +34,8 @@ include( GoogleTest )
 target_include_directories(test_xgameruntime
         PRIVATE
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
 
 # For discovery purposes.
@@ -44,3 +59,19 @@ endif()
 gtest_discover_tests(
         test_xgameruntime
         DISCOVERY_MODE PRE_TEST )
+
+
+# ------------------------------------------------------------
+# Xodus unix side: test server library and host tests (host compiler)
+# ------------------------------------------------------------
+xodus_add_host_target( xodus-test-server SHARED
+        OUTPUT ${CMAKE_BINARY_DIR}/bin/xodus_test_server.so
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unix/xodus_test_server.c )
+
+add_dependencies( test_xgameruntime xgameruntime-unix xodus-test-server )
+
+xodus_add_host_target( xodus-path-test EXECUTABLE
+        OUTPUT ${CMAKE_BINARY_DIR}/bin/xodus_path_test
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unix/xodus_path_test.c )
+
+add_test( NAME xodus_host_unix_lib COMMAND ${CMAKE_BINARY_DIR}/bin/xodus_path_test )

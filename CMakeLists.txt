@@ -80,6 +80,8 @@ endforeach()
 add_custom_target(xgameruntime-idl
         DEPENDS ${IDL_GENERATED_FILES} )
 
+include( ${CMAKE_CURRENT_SOURCE_DIR}/unix/XodusHost.cmake )
+
 if(ENABLE_TESTS)
     enable_testing()
     message( STATUS "Tests are enabled." )
