@@ -11,6 +11,7 @@ add_dependencies(xgameruntime-impl
 
 # System
 target_sources(xgameruntime-impl PRIVATE
+        System/XGameInvite.cpp
         System/XThreading.cpp )
 
 # System/Threading (based on libHttpClient)

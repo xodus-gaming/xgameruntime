@@ -51,6 +51,7 @@
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>
+#include <xgameinvite.h>
 
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
@@ -63,5 +64,6 @@
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
 extern IXThreadingImpl *x_threading_impl;
+extern IXGameInviteImpl2 *x_game_invite_impl;
 
 #endif
