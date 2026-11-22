@@ -1,4 +1,7 @@
 add_executable(test_xgameruntime
+        System/test_xsystem.cpp
+        System/test_xsystem_linkage.cpp
+        System/test_xsystemanalytics.cpp
         System/test_xthreading.cpp
         test_fixtures.cpp)
 
@@ -21,6 +24,7 @@ include( GoogleTest )
 target_include_directories(test_xgameruntime
         PRIVATE
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
 
 # For discovery purposes.

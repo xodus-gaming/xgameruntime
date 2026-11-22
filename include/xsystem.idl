@@ -126,6 +126,21 @@ struct XSystemRuntimeInfo
     XVersion availableVersion;
 };
 
+/* The XSystem functions libxgameruntime exports, with C linkage so that C and C++ callers find them. */
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("extern \"C\" {")
+cpp_quote("#endif")
+cpp_quote("HRESULT __stdcall XSystemGetConsoleId( INT32 consoleIdSize, char *consoleId, SIZE_T *consoleIdUsed );")
+cpp_quote("HRESULT __stdcall XSystemGetXboxLiveSandboxId( INT32 sandboxIdSize, char *sandboxId, SIZE_T *sandboxIdUsed );")
+cpp_quote("HRESULT __stdcall XSystemGetAppSpecificDeviceId( INT32 appSpecificDeviceIdSize, char *appSpecificDeviceId, SIZE_T *appSpecificDeviceIdUsed );")
+cpp_quote("HRESULT __stdcall XSystemHandleTrack( XSystemHandleCallback callback, void *context );")
+cpp_quote("BOOLEAN __stdcall XSystemIsHandleValid( XSystemHandle handle );")
+cpp_quote("void __stdcall XSystemAllowFullDownloadBandwidth( BOOLEAN enable );")
+cpp_quote("XSystemAnalyticsInfo __stdcall XSystemGetAnalyticsInfo( void );")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("}")
+cpp_quote("#endif")
+
 cpp_quote("#ifdef __WINESRC__")
 
 [
