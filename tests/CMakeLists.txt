@@ -1,10 +1,17 @@
 add_executable(test_xgameruntime
+        System/test_gameconfig.cpp
+        System/test_xgame.cpp
+        System/test_xgame_integration.cpp
         System/test_xthreading.cpp
+        ${CMAKE_SOURCE_DIR}/src/GameConfig.cpp
+        ${CMAKE_SOURCE_DIR}/src/System/XGame.cpp
         test_fixtures.cpp)
 
 target_link_libraries(test_xgameruntime
         PRIVATE
         libxgameruntime
+        xmllite
+        ole32
         GTest::gtest_main )
 
 target_link_options(test_xgameruntime PRIVATE
@@ -21,7 +28,14 @@ include( GoogleTest )
 target_include_directories(test_xgameruntime
         PRIVATE
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/external/googletest/googletest/include )
+
+# The default MicrosoftGame.config lookup starts at the test executable.
+add_custom_command( TARGET test_xgameruntime POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_CURRENT_SOURCE_DIR}/System/fixtures/MicrosoftGame.config
+                $<TARGET_FILE_DIR:test_xgameruntime> )
 
 # For discovery purposes.
 set_target_properties(test_xgameruntime PROPERTIES

@@ -62,3 +62,5 @@ coclass XGameImpl
 }
 
 cpp_quote("#endif")
+
+cpp_quote("HRESULT __stdcall XGameGetXboxTitleId( UINT32 *titleId );")

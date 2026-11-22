@@ -11,6 +11,8 @@ add_dependencies(xgameruntime-impl
 
 # System
 target_sources(xgameruntime-impl PRIVATE
+        GameConfig.cpp
+        System/XGame.cpp
         System/XThreading.cpp )
 
 # System/Threading (based on libHttpClient)
@@ -21,7 +23,9 @@ target_sources(xgameruntime-impl PRIVATE
         System/Threading/XTaskQueue.cpp )
 
 target_link_libraries( xgameruntime-impl PRIVATE
-        xgameruntime-common )
+        xgameruntime-common
+        xmllite
+        ole32 )
 
 target_include_directories(xgameruntime-impl
         PUBLIC
