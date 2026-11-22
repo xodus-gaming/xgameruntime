@@ -21,6 +21,15 @@
 import "unknwn.idl";
 import "xuser.idl";
 
+/* The XGameEvent function libxgameruntime exports, with C linkage so that C and C++ callers find it. */
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("extern \"C\" {")
+cpp_quote("#endif")
+cpp_quote("HRESULT __stdcall XGameEventWrite( XUserHandle user, const char *serviceConfigId, const char *playSessionId, const char *eventName, const char *dimensionsJson, const char *measurementsJson );")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("}")
+cpp_quote("#endif")
+
 cpp_quote("#ifdef __WINESRC__")
 
 [

@@ -44,6 +44,7 @@
 
 #include <xgameerr.h>
 #include <xsystem.h>
+#include <xgameevent.h>
 #include <xgameruntimeinit.h>
 #include <xgameruntimefeature.h>
 #include <xnetworking.h>
@@ -63,5 +64,6 @@
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
 extern IXThreadingImpl *x_threading_impl;
+extern IXGameEventImpl *x_game_event_impl;
 
 #endif
