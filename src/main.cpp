@@ -20,6 +20,7 @@
 
 #include <initguid.h>
 #include "private.h"
+#include <xpackage.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,6 +102,11 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     if ( IsEqualGUID( clsid, CLSID_XThreadingImpl ) )
     {
         return x_threading_impl->QueryInterface( iid, out );
+    }
+
+    if ( IsEqualGUID( clsid, CLSID_XPackageImpl ) )
+    {
+        return x_package_impl->QueryInterface( iid, out );
     }
 
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );

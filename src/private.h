@@ -64,4 +64,8 @@
 
 extern IXThreadingImpl *x_threading_impl;
 
+// XPackage.cpp is a C-style object (see there), main.cpp only calls QueryInterface on it.
+struct IXPackageImpl4;
+extern IXPackageImpl4 *x_package_impl;
+
 #endif
