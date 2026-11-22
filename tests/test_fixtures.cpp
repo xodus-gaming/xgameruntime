@@ -23,6 +23,18 @@
 
 #include <windows.h>
 #include <xgameruntimeinit.h>
+#include <private/logging.h>
+
+namespace
+{
+    /* Code under test that links in directly (not through the DLL) logs through
+     * the production logger, which needs initializing once in this process. */
+    class LoggingEnvironment : public ::testing::Environment
+    {
+        void SetUp() override { InitializeLogging(); }
+    };
+    ::testing::Environment *const g_logging = ::testing::AddGlobalTestEnvironment( new LoggingEnvironment );
+}
 
 void XGameRuntimeTests::SetUpTestSuite()
 {
