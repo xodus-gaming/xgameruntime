@@ -137,6 +137,33 @@ struct XClosedCaptionProperties
     BOOLEAN Enabled;
 };
 
+/* The XAccessibility functions libxgameruntime exports, with C linkage so that C and C++ callers find them. */
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("extern \"C\" {")
+cpp_quote("#endif")
+cpp_quote("HRESULT __stdcall XClosedCaptionGetProperties( XClosedCaptionProperties *props );")
+cpp_quote("HRESULT __stdcall XClosedCaptionSetEnabled( BOOLEAN enabled );")
+cpp_quote("HRESULT __stdcall XHighContrastGetMode( XHighContrastMode *mode );")
+cpp_quote("HRESULT __stdcall XSpeechToTextSetPositionHint( XSpeechToTextPositionHint position );")
+cpp_quote("HRESULT __stdcall XSpeechToTextSendString( const char *speakerName, const char *content, XSpeechToTextType type );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerEnumerateInstalledVoices( void *context, XSpeechSynthesizerInstalledVoicesCallback *callback );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerCreate( XSpeechSynthesizerHandle *speechSynthesizer );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerCloseHandle( XSpeechSynthesizerHandle speechSynthesizer );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerSetDefaultVoice( XSpeechSynthesizerHandle speechSynthesizer );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerSetCustomVoice( XSpeechSynthesizerHandle speechSynthesizer, const char *voiceId );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerCreateStreamFromText( XSpeechSynthesizerHandle speechSynthesizer, const char *text, XSpeechSynthesizerStreamHandle *speechSynthesisStream );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerCloseStreamHandle( XSpeechSynthesizerStreamHandle speechSynthesisStream );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerGetStreamDataSize( XSpeechSynthesizerStreamHandle speechSynthesisStream, SIZE_T *bufferSize );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerGetStreamData( XSpeechSynthesizerStreamHandle speechSynthesisStream, SIZE_T bufferSize, void *buffer, SIZE_T *bufferUsed );")
+cpp_quote("HRESULT __stdcall XSpeechToTextBeginHypothesisString( const char *speakerName, const char *content, XSpeechToTextType type, UINT32 *hypothesisId );")
+cpp_quote("HRESULT __stdcall XSpeechToTextUpdateHypothesisString( UINT32 hypothesisId, const char *content );")
+cpp_quote("HRESULT __stdcall XSpeechToTextFinalizeHypothesisString( UINT32 hypothesisId, const char *content );")
+cpp_quote("HRESULT __stdcall XSpeechToTextCancelHypothesisString( UINT32 hypothesisId );")
+cpp_quote("HRESULT __stdcall XSpeechSynthesizerCreateStreamFromSsml( XSpeechSynthesizerHandle speechSynthesizer, const char *ssml, XSpeechSynthesizerStreamHandle *speechSynthesisStream );")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("}")
+cpp_quote("#endif")
+
 cpp_quote("#ifdef __WINESRC__")
 
 [

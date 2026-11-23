@@ -1,4 +1,5 @@
 add_executable(test_xgameruntime
+        System/test_xaccessibility.cpp
         System/test_xthreading.cpp
         test_fixtures.cpp)
 

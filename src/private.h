@@ -48,6 +48,7 @@
 #include <xgameruntimefeature.h>
 #include <xnetworking.h>
 #include <xuser.h>
+#include <xaccessibility.h>
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>
@@ -63,5 +64,6 @@
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
 extern IXThreadingImpl *x_threading_impl;
+extern IXAccessibilityImpl2 *x_accessibility_impl;
 
 #endif
