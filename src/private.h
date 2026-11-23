@@ -48,6 +48,8 @@
 #include <xgameruntimefeature.h>
 #include <xnetworking.h>
 #include <xuser.h>
+#include <xerror.h>
+#include <xgame.h>
 #include <xasync.h>
 #include <xasyncprovider.h>
 #include <xtaskqueue.h>
@@ -63,5 +65,17 @@
 #define E_ILLEGAL_METHOD_CALL                              _HRESULT_TYPEDEF_(0x8000000E)
 
 extern IXThreadingImpl *x_threading_impl;
+extern IXGameRuntimeFeatureImpl *x_game_runtime_feature;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* TRUE when QueryApiImpl serves this CLSID (main.cpp's class table). */
+BOOL IsClassServed( REFCLSID clsid );
+/* Records bit 3 (0x8) of InitializeApiImplEx's mode argument, as Windows does. */
+void XGameRuntimeFeatureSetInitMode( char mode );
+#ifdef __cplusplus
+}
+#endif
 
 #endif

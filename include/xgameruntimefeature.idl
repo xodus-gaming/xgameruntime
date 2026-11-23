@@ -78,6 +78,8 @@ typedef enum XGameRuntimeFeature
 
 cpp_quote("#endif")
 
+cpp_quote("BOOLEAN __stdcall XGameRuntimeIsFeatureAvailable( XGameRuntimeFeature feature );")
+
 [
     local,
     object,

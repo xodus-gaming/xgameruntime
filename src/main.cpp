@@ -57,6 +57,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, void *reserved )
 HRESULT WINAPI InitializeApiImplEx2( ULONG gdkVer, ULONG gsVer, char mode, const INITIALIZE_OPTIONS *options )
 {
     TRACE( "gdkVer %ld, gsVer %ld, mode %d, options %p.\n", gdkVer, gsVer, mode, options );
+    XGameRuntimeFeatureSetInitMode( mode );
     return S_OK;
 }
 
@@ -68,6 +69,25 @@ HRESULT WINAPI InitializeApiImplEx( ULONG gdkVer, ULONG gsVer, char mode )
 HRESULT WINAPI InitializeApiImpl( ULONG gdkVer, ULONG gsVer )
 {
     return InitializeApiImplEx2( gdkVer, gsVer, 0, NULL );
+}
+
+/* Every CLSID QueryApiImpl serves. Adding a row also makes the matching feature available. */
+struct ClassRow { const CLSID *clsid; IUnknown *(*object)(); };
+static const ClassRow g_classes[] = {
+    { &CLSID_XThreadingImpl,          []() -> IUnknown * { return x_threading_impl; } },
+    { &CLSID_XGameRuntimeFeatureImpl, []() -> IUnknown * { return x_game_runtime_feature; } },
+};
+
+static const ClassRow *FindClass( REFCLSID clsid )
+{
+    for ( const ClassRow &row : g_classes )
+        if ( IsEqualGUID( clsid, *row.clsid ) ) return &row;
+    return nullptr;
+}
+
+BOOL IsClassServed( REFCLSID clsid )
+{
+    return FindClass( clsid ) != nullptr;
 }
 
 HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
@@ -98,13 +118,11 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
     //
     TRACE( "clsid %s, iid %s, out %p.\n", debugstr_guid( &clsid ), debugstr_guid( &iid ), out );
 
-    if ( IsEqualGUID( clsid, CLSID_XThreadingImpl ) )
-    {
-        return x_threading_impl->QueryInterface( iid, out );
-    }
+    const ClassRow *row = FindClass( clsid );
+    if ( row ) return row->object()->QueryInterface( iid, out );
 
-    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
-    return REGDB_E_CLASSNOTREG;
+    FIXME( "%s not implemented, returning ERROR_NOT_SUPPORTED.\n", debugstr_guid( &clsid ) );
+    return HRESULT_FROM_WIN32( ERROR_NOT_SUPPORTED );
 }
 
 HRESULT WINAPI UninitializeApiImpl()
