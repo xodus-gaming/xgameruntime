@@ -23,6 +23,16 @@ import "xtaskqueue.h";
 
 typedef void __stdcall XGameProtocolActivationCallback( void *context, const char *protocolUri );
 
+/* The XGameProtocol functions libxgameruntime exports, with C linkage so that C and C++ callers find them. */
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("extern \"C\" {")
+cpp_quote("#endif")
+cpp_quote("HRESULT __stdcall XGameProtocolRegisterForActivation( XTaskQueueHandle queue, void *context, XGameProtocolActivationCallback *callback, XTaskQueueRegistrationToken *token );")
+cpp_quote("BOOLEAN __stdcall XGameProtocolUnregisterForActivation( XTaskQueueRegistrationToken token, BOOLEAN wait );")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("}")
+cpp_quote("#endif")
+
 cpp_quote("#ifdef __WINESRC__")
 
 [

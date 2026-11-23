@@ -1,4 +1,6 @@
 add_executable(test_xgameruntime
+        System/test_xgameprotocol.cpp
+        System/test_xgameprotocol_linkage.cpp
         System/test_xthreading.cpp
         test_fixtures.cpp)
 
