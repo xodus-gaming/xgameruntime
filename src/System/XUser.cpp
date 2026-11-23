@@ -21,7 +21,10 @@
 
 #include "../private.h"
 
+#include "../GameConfig.h"
+#include "../Xodus/SharedClient.h"
 #include "XUserHandle.h"
+#include "XUserIdentity.h"
 
 #include <atomic>
 #include <mutex>
@@ -31,9 +34,82 @@ static std::mutex g_change_lock;
 static std::set<UINT64> g_change_tokens;
 static UINT64 g_change_next = 1;
 
+/* Holds the user between DoWork and the result call; owns one reference until handed out. */
+struct XUserAddState
+{
+    XUser *user = nullptr;
+};
+
+static HRESULT XUserAddWork( XUserAddState *state )
+{
+    UINT32 titleId = 0;
+    std::string appId;
+    HRESULT titleIdHr = GameConfig::GetTitleId( &titleId );
+    HRESULT appIdHr = GameConfig::GetMsaAppId( appId );
+    UserInfoQuery query = BuildUserInfoQuery( titleIdHr, titleId, appIdHr, appId );
+
+    Xodus::XodusClient *client = Xodus::SharedClient();
+    if (!client)
+    {
+        WARN( "xodus client unavailable, no user can be added; check that xgameruntime-unix.so is next to xgameruntime.dll.\n" );
+        return E_GAMEUSER_NO_DEFAULT_USER;
+    }
+
+    Xodus::UserInfoResult info;
+    HRESULT hr = client->UserInfo( query.clientId, query.titleId, false, info );
+    if (UserInfoIsTransportFailure( hr, info ))
+    {
+        WARN( "xodus-service unreachable (hr %#lx), no user can be added; start xodus-service.\n", (unsigned long)hr );
+        return E_GAMEUSER_NO_DEFAULT_USER;
+    }
+
+    UserRecord record;
+    hr = IdentityFromUserInfo( info, record );
+    if (hr == E_GAMEUSER_NO_DEFAULT_USER)
+    {
+        TRACE( "xodus-service reports no signed-in user; sign in to Xbox in xodus-service.\n" );
+        return hr;
+    }
+    if (FAILED( hr ))
+    {
+        TRACE( "xodus-service identity rejected, hr %#lx.\n", (unsigned long)hr );
+        return hr;
+    }
+
+    state->user = UserCreateOrRefresh( record );
+    TRACE( "added user xuid %llu, gamertag %s.\n", (unsigned long long)record.xuid, record.gamertag.c_str() );
+    return S_OK;
+}
+
 static HRESULT CALLBACK XUserAddProvider( XAsyncOp op, const XAsyncProviderData *data )
 {
-    return op == XAsyncOp::Begin ? E_GAMEUSER_NO_DEFAULT_USER : S_OK;
+    XUserAddState *state = static_cast<XUserAddState *>( data->context );
+
+    switch (op)
+    {
+        case XAsyncOp::Begin:
+            return XAsyncSchedule( data->async, 0 );
+
+        case XAsyncOp::DoWork:
+        {
+            HRESULT hr = XUserAddWork( state );
+            XAsyncComplete( data->async, hr, SUCCEEDED( hr ) ? sizeof(XUserHandle) : 0 );
+            return hr;
+        }
+
+        case XAsyncOp::GetResult:
+            *static_cast<XUserHandle *>( data->buffer ) = state->user;
+            state->user = nullptr;
+            return S_OK;
+
+        case XAsyncOp::Cleanup:
+            if (state->user) UserRelease( state->user );
+            delete state;
+            return S_OK;
+
+        default:
+            return S_OK;
+    }
 }
 
 class XUserImpl :
@@ -132,7 +208,11 @@ public:
         TRACE( "options %#x, async %p.\n", (UINT32)options, async );
 
         if (!async) return E_INVALIDARG;
-        return XAsyncBegin( async, nullptr, reinterpret_cast<const void *>( XUserAddProvider ), "XUserAddAsync", XUserAddProvider );
+
+        XUserAddState *state = new XUserAddState();
+        HRESULT hr = XAsyncBegin( async, state, reinterpret_cast<const void *>( XUserAddProvider ), "XUserAddAsync", XUserAddProvider );
+        if (FAILED( hr )) delete state;
+        return hr;
     }
 
     HRESULT WINAPI XUserAddResult( XAsyncBlock *async, XUserHandle *newUser ) override
@@ -142,13 +222,7 @@ public:
         if (!async || !newUser) return E_INVALIDARG;
         *newUser = nullptr;
 
-        HRESULT hr = XAsyncGetResult( async, reinterpret_cast<const void *>( XUserAddProvider ), 0, nullptr, nullptr );
-        if (SUCCEEDED( hr ))
-        {
-            ERR( "async %p did not complete with a failure, returning E_INVALIDARG.\n", async );
-            return E_INVALIDARG;
-        }
-        return hr;
+        return XAsyncGetResult( async, reinterpret_cast<const void *>( XUserAddProvider ), sizeof(XUserHandle), newUser, nullptr );
     }
 
     HRESULT WINAPI XUserGetLocalId( XUserHandle user, XUserLocalId *userLocalId ) override
@@ -165,15 +239,19 @@ public:
         TRACE( "userLocalId %llu, handle %p.\n", userLocalId.value, handle );
 
         if (!handle) return E_INVALIDARG;
-        *handle = nullptr;
-        return E_GAMEUSER_USER_NOT_FOUND;
+        *handle = UserFindByLocalId( userLocalId );
+        return *handle ? S_OK : E_GAMEUSER_USER_NOT_FOUND;
     }
 
     HRESULT WINAPI XUserGetId( XUserHandle user, UINT64 *userId ) override
     {
-        FIXME( "user %p, userId %p; no Xbox Live identity source, returning E_NOTIMPL.\n", user, userId );
-        if (userId) *userId = 0;
-        return E_NOTIMPL;
+        TRACE( "user %p, userId %p.\n", user, userId );
+
+        if (!userId || !UserIsValid( user )) return E_INVALIDARG;
+        UserRecord record;
+        UserSnapshot( user, record );
+        *userId = record.xuid;
+        return S_OK;
     }
 
     HRESULT WINAPI XUserFindUserById( UINT64 userId, XUserHandle *handle ) override
@@ -181,8 +259,8 @@ public:
         TRACE( "userId %llu, handle %p.\n", userId, handle );
 
         if (!handle) return E_INVALIDARG;
-        *handle = nullptr;
-        return E_GAMEUSER_USER_NOT_FOUND;
+        *handle = UserFindById( userId );
+        return *handle ? S_OK : E_GAMEUSER_USER_NOT_FOUND;
     }
 
     HRESULT WINAPI XUserGetIsGuest( XUserHandle user, BOOLEAN *isGuest ) override
@@ -234,7 +312,9 @@ public:
         TRACE( "user %p, ageGroup %p.\n", user, ageGroup );
 
         if (!ageGroup || !UserIsValid( user )) return E_INVALIDARG;
-        *ageGroup = XUserAgeGroup::Adult;
+        UserRecord record;
+        UserSnapshot( user, record );
+        *ageGroup = record.ageGroup;
         return S_OK;
     }
 
@@ -443,9 +523,17 @@ public:
 
     HRESULT WINAPI XUserGetGamertag( XUserHandle user, XUserGamertagComponent gamertagComponent, SIZE_T gamertagSize, char *gamertag, SIZE_T *gamertagUsed ) override
     {
-        FIXME( "user %p, gamertagComponent %u, gamertagSize %zu, gamertag %p, gamertagUsed %p; no Xbox Live identity source, returning E_NOTIMPL.\n", user, (UINT32)gamertagComponent, gamertagSize, gamertag, gamertagUsed );
-        if (gamertagUsed) *gamertagUsed = 0;
-        return E_NOTIMPL;
+        TRACE( "user %p, gamertagComponent %u, gamertagSize %zu, gamertag %p, gamertagUsed %p.\n", user, (UINT32)gamertagComponent, gamertagSize, gamertag, gamertagUsed );
+
+        if (!UserIsValid( user )) return E_INVALIDARG;
+        if (!gamertag && gamertagSize) return E_INVALIDARG;
+
+        UserRecord record;
+        UserSnapshot( user, record );
+        SIZE_T used = 0;
+        HRESULT hr = GamertagComponent( record, gamertagComponent, gamertagSize, gamertag, &used );
+        if (gamertagUsed && (hr == S_OK || hr == HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ))) *gamertagUsed = used;
+        return hr;
     }
 
 private:

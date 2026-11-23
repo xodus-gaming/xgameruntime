@@ -28,6 +28,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "tests/unix/xodus_test_server.h"
 
@@ -131,6 +133,26 @@ namespace XodusTest
             xts_stats_args a = {};
             m_dispatch( m_funcs, XTS_CALL_STATS, &a );
             return a;
+        }
+
+        /* Replaces the reply payload; a live connection sees it on its next request. */
+        void SetReply( const std::string &resp )
+        {
+            xts_setresp_args a = {};
+            a.resp = (const uint8_t *)resp.data();
+            a.resp_len = (uint32_t)resp.size();
+            m_dispatch( m_funcs, XTS_CALL_SETRESP, &a );
+        }
+
+        /* The last frame the server received: its type and body. */
+        std::pair<int, std::string> LastFrame()
+        {
+            std::vector<uint8_t> buf( 65536 );
+            xts_last_args a = {};
+            a.buf = buf.data();
+            a.cap = (uint32_t)buf.size();
+            m_dispatch( m_funcs, XTS_CALL_LAST, &a );
+            return { a.type, std::string( (const char *)buf.data(), a.len < a.cap ? a.len : a.cap ) };
         }
 
         const std::string &Path() const { return m_path; }

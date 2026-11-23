@@ -19,7 +19,9 @@
 #include "../test_fixtures.h"
 
 #include <atomic>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -31,6 +33,7 @@
 #include <xuser.h>
 
 #include "../../src/System/XUserHandle.h"
+#include "tests/Xodus/xodus_test_support.h"
 
 // Public wrappers exported by libxgameruntime (libs/libxgameruntime/Impl.cpp); no installed header declares them.
 HRESULT __stdcall XUserDuplicateHandle( XUserHandle handle, XUserHandle *duplicatedHandle );
@@ -102,6 +105,16 @@ const GUID IID_Game_IXUserGamertagImpl = { 0xcef4fac0, 0x7676, 0x4a94, { 0xa1, 0
 XUserHandle MakeUser( UINT64 localId )
 {
     return new XUser{ XUSER_SIGNATURE, 2, { localId } };
+}
+
+XUserHandle MakeIdentityUser( UINT64 localId, UINT64 xuid, XUserAgeGroup age )
+{
+    XUser *u = new XUser{ XUSER_SIGNATURE, 2, { localId }, xuid, age };
+    u->gamertag = "Classic";
+    u->modernGamertag = "Modern";
+    u->modernGamertagSuffix = "1234";
+    u->uniqueModernGamertag = "Modern#1234";
+    return u;
 }
 
 void FreeUser( XUserHandle h )
@@ -357,7 +370,7 @@ TEST( XUserGetters, ValidHandle )
 
     XUserAgeGroup age = XUserAgeGroup::Unknown;
     EXPECT_EQ( S_OK, XUserGetAgeGroup( h, &age ) );
-    EXPECT_EQ( XUserAgeGroup::Adult, age );
+    EXPECT_EQ( XUserAgeGroup::Unknown, age );
 
     BOOLEAN has = FALSE;
     XUserPrivilegeDenyReason reason = XUserPrivilegeDenyReason::Banned;
@@ -385,6 +398,16 @@ TEST( XUserGetters, InvalidHandleAndNullOut )
         EXPECT_EQ( E_INVALIDARG, XUserGetLocalId( bad, &id ) );
         EXPECT_EQ( 99u, id.value );
 
+        UINT64 xuid = 99;
+        EXPECT_EQ( E_INVALIDARG, XUserGetId( bad, &xuid ) );
+        EXPECT_EQ( 99u, xuid );
+
+        SIZE_T used = 99;
+        char text[8] = "abcdefg";
+        EXPECT_EQ( E_INVALIDARG, XUserGetGamertag( bad, XUserGamertagComponent::Classic, sizeof(text), text, &used ) );
+        EXPECT_EQ( 99u, used );
+        EXPECT_STREQ( "abcdefg", text );
+
         XUserState state = XUserState::SigningOut;
         EXPECT_EQ( E_INVALIDARG, XUserGetState( bad, &state ) );
         EXPECT_EQ( XUserState::SigningOut, state );
@@ -407,10 +430,76 @@ TEST( XUserGetters, InvalidHandleAndNullOut )
     }
 
     EXPECT_EQ( E_INVALIDARG, XUserGetLocalId( h, nullptr ) );
+    EXPECT_EQ( E_INVALIDARG, XUserGetId( h, nullptr ) );
     EXPECT_EQ( E_INVALIDARG, XUserGetState( h, nullptr ) );
     EXPECT_EQ( E_INVALIDARG, XUserGetIsGuest( h, nullptr ) );
     EXPECT_EQ( E_INVALIDARG, XUserGetAgeGroup( h, nullptr ) );
     EXPECT_EQ( E_INVALIDARG, XUserCheckPrivilege( h, XUserPrivilegeOptions::None, XUserPrivilege::Multiplayer, nullptr, nullptr ) );
+    FreeUser( h );
+}
+
+TEST( XUserGetters, IdentityValues )
+{
+    XUserHandle h = MakeIdentityUser( 42, 2535405123456789ull, XUserAgeGroup::Teen );
+
+    UINT64 xuid = 0;
+    EXPECT_EQ( S_OK, XUserGetId( h, &xuid ) );
+    EXPECT_EQ( 2535405123456789ull, xuid );
+
+    XUserLocalId id{ 0 };
+    EXPECT_EQ( S_OK, XUserGetLocalId( h, &id ) );
+    EXPECT_EQ( 42u, id.value );
+
+    XUserAgeGroup age = XUserAgeGroup::Unknown;
+    EXPECT_EQ( S_OK, XUserGetAgeGroup( h, &age ) );
+    EXPECT_EQ( XUserAgeGroup::Teen, age );
+
+    XUserState state = XUserState::SignedOut;
+    EXPECT_EQ( S_OK, XUserGetState( h, &state ) );
+    EXPECT_EQ( XUserState::SignedIn, state );
+    FreeUser( h );
+}
+
+TEST( XUserGetters, GamertagComponents )
+{
+    XUserHandle h = MakeIdentityUser( 42, 1, XUserAgeGroup::Adult );
+    const struct { XUserGamertagComponent c; const char *text; } cases[] = {
+        { XUserGamertagComponent::Classic, "Classic" },
+        { XUserGamertagComponent::Modern, "Modern" },
+        { XUserGamertagComponent::ModernSuffix, "1234" },
+        { XUserGamertagComponent::UniqueModern, "Modern#1234" },
+    };
+
+    for (const auto &t : cases)
+    {
+        SCOPED_TRACE( t.text );
+        size_t need = strlen( t.text ) + 1;
+        char text[32];
+        SIZE_T used = 0;
+        EXPECT_EQ( S_OK, XUserGetGamertag( h, t.c, sizeof(text), text, &used ) );
+        EXPECT_EQ( need, used );
+        EXPECT_STREQ( t.text, text );
+
+        char small[32] = "untouched";
+        used = 0;
+        EXPECT_EQ( HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ), XUserGetGamertag( h, t.c, need - 1, small, &used ) );
+        EXPECT_EQ( need, used );
+        EXPECT_STREQ( "untouched", small );
+
+        used = 0;
+        EXPECT_EQ( HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ), XUserGetGamertag( h, t.c, 0, nullptr, &used ) );
+        EXPECT_EQ( need, used );
+    }
+
+    SIZE_T used = 99;
+    char text[8] = "abcdefg";
+    EXPECT_EQ( E_INVALIDARG, XUserGetGamertag( h, (XUserGamertagComponent)9, sizeof(text), text, &used ) );
+    EXPECT_EQ( 99u, used );
+    EXPECT_STREQ( "abcdefg", text );
+
+    used = 99;
+    EXPECT_EQ( E_INVALIDARG, XUserGetGamertag( h, XUserGamertagComponent::Classic, sizeof(text), nullptr, &used ) );
+    EXPECT_EQ( 99u, used );
     FreeUser( h );
 }
 
@@ -442,11 +531,6 @@ HRESULT CALLBACK PendingUntilCancel( XAsyncOp op, const XAsyncProviderData *data
     return S_OK;
 }
 
-HRESULT CALLBACK CompleteOk( XAsyncBlock * )
-{
-    return S_OK;
-}
-
 void CALLBACK ChangeCb( void *context, XUserLocalId, XUserChangeEvent )
 {
     static_cast<std::atomic<int> *>( context )->fetch_add( 1 );
@@ -456,6 +540,9 @@ void CALLBACK ChangeCb( void *context, XUserLocalId, XUserChangeEvent )
 
 TEST( XUserAdd, AllOptionsNoDefaultUser )
 {
+    if (GetFileAttributesA( "Z:\\tmp\\xodus.sock" ) != INVALID_FILE_ATTRIBUTES)
+        GTEST_SKIP() << "/tmp/xodus.sock exists: an xodus-service may be listening";
+
     const XUserAddOptions options[] = { XUserAddOptions::None, XUserAddOptions::AddDefaultUserSilently, XUserAddOptions::AddDefaultUserAllowingUI };
     for (XUserAddOptions opt : options)
     {
@@ -500,21 +587,6 @@ TEST( XUserAdd, PendingBlockNotCompleted )
     XAsyncCancel( &async );
     EXPECT_EQ( E_ABORT, XAsyncGetStatus( &async, TRUE ) );
     EXPECT_EQ( WAIT_OBJECT_0, WaitForSingleObject( w.event, 5000 ) );
-}
-
-TEST( XUserAdd, ResultOfSuccessfulBlockIsInvalidArg )
-{
-    AddWait w;
-    XAsyncBlock async = {};
-    async.context = &w;
-    async.callback = AddCompleted;
-
-    ASSERT_EQ( S_OK, XAsyncRun( &async, CompleteOk ) );
-    ASSERT_EQ( WAIT_OBJECT_0, WaitForSingleObject( w.event, 5000 ) );
-
-    XUserHandle user = reinterpret_cast<XUserHandle>( 0x1234 );
-    EXPECT_EQ( E_INVALIDARG, XUserAddResult( &async, &user ) );
-    EXPECT_EQ( nullptr, user );
 }
 
 TEST( XUserChangeEvents, RegisterUnregister )
@@ -565,6 +637,55 @@ TEST( XUserFind, NotFound )
     EXPECT_EQ( E_INVALIDARG, XUserFindUserById( 1, nullptr ) );
 }
 
+// The exported API runs in xgameruntime.dll, whose user object is separate from this exe's copy of
+// XUserIdentity.cpp, so the user is installed through XUserAddAsync against a test xodus server.
+TEST( XUserFind, InstalledUserMatchAndMiss )
+{
+    if (GetFileAttributesA( "Z:\\tmp\\xodus.sock" ) != INVALID_FILE_ATTRIBUTES)
+        GTEST_SKIP() << "/tmp/xodus.sock exists: an xodus-service may be listening";
+
+    XodusTest::TestServer server( XTS_MODE_SERVE, "/tmp/xodus.sock",
+        "<UserInfoResponse><SignedIn>true</SignedIn><Xuid>4242</Xuid><Gamertag>Find</Gamertag></UserInfoResponse>" );
+
+    AddWait w;
+    XAsyncBlock async = {};
+    async.context = &w;
+    async.callback = AddCompleted;
+    ASSERT_EQ( S_OK, XUserAddAsync( XUserAddOptions::AddDefaultUserSilently, &async ) );
+    ASSERT_EQ( WAIT_OBJECT_0, WaitForSingleObject( w.event, 5000 ) );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, XUserAddResult( &async, &u ) );
+    ASSERT_NE( nullptr, u );
+    UINT64 xuid = 0;
+    ASSERT_EQ( S_OK, XUserGetId( u, &xuid ) );
+    ASSERT_EQ( 4242u, xuid );
+    XUserLocalId localId{ 0 };
+    ASSERT_EQ( S_OK, XUserGetLocalId( u, &localId ) );
+    LONG before = u->refs.load();
+
+    XUserHandle h = nullptr;
+    EXPECT_EQ( S_OK, XUserFindUserById( 4242, &h ) );
+    EXPECT_EQ( u, h );
+    EXPECT_EQ( before + 1, u->refs.load() );
+    XUserCloseHandle( h );
+
+    h = nullptr;
+    EXPECT_EQ( S_OK, XUserFindUserByLocalId( localId, &h ) );
+    EXPECT_EQ( u, h );
+    EXPECT_EQ( before + 1, u->refs.load() );
+    XUserCloseHandle( h );
+
+    h = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( (HRESULT)0x89245104, XUserFindUserById( 4243, &h ) );
+    EXPECT_EQ( nullptr, h );
+    h = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( (HRESULT)0x89245104, XUserFindUserByLocalId( XUserLocalId{ localId.value + 1 }, &h ) );
+    EXPECT_EQ( nullptr, h );
+
+    EXPECT_EQ( before, u->refs.load() );
+    XUserCloseHandle( u );
+}
+
 TEST( XUserSignOutDeferral, NotAvailable )
 {
     XUserSignOutDeferralHandle d = reinterpret_cast<XUserSignOutDeferralHandle>( 0x1234 );
@@ -613,16 +734,8 @@ TEST( XUserStubs, ResultAndOutStubs )
     XAsyncBlock block = {};
     const SIZE_T sentinel = 0xdeadbeef;
 
-    UINT64 id = sentinel;
-    EXPECT_EQ( E_NOTIMPL, XUserGetId( u, &id ) );
-    EXPECT_EQ( 0u, id );
-    EXPECT_EQ( E_NOTIMPL, XUserGetId( u, nullptr ) );
-
     SIZE_T used = sentinel;
     char text[8] = "abcdefg";
-    EXPECT_EQ( E_NOTIMPL, XUserGetGamertag( u, XUserGamertagComponent::Classic, sizeof(text), text, &used ) );
-    EXPECT_EQ( 0u, used );
-    EXPECT_STREQ( "abcdefg", text );
 
     SIZE_T size = sentinel;
     EXPECT_EQ( E_NOTIMPL, XUserGetGamerPictureResultSize( &block, &size ) );
@@ -778,4 +891,443 @@ TEST( XUserDeviceStubs, AllMethods )
     EXPECT_EQ( E_NOTIMPL, XUserFindControllerForUserWithUiResult( &async, &out ) );
     for (BYTE b : out.value) EXPECT_EQ( 0, b );
     EXPECT_EQ( E_NOTIMPL, XUserFindControllerForUserWithUiResult( &async, nullptr ) );
+}
+
+// ---- Signed-in path through the DLL, against the test xodus server ----
+//
+// The DLL keeps one process-wide user object that survives across tests. Tests here never assume it is
+// absent or has particular identity before they add: each serves its own reply and adds first. The
+// user-less tests earlier in this file (XUserFind.NotFound and others) must stay ahead of these.
+
+namespace
+{
+
+constexpr HRESULT kNoDefaultUser = (HRESULT)0x89245106;
+
+std::string UserInfoReply( const std::string &xuid = "4242", const std::string &gamertag = "Classic",
+                           const std::string &modern = "Modern", const std::string &suffix = "1234",
+                           const std::string &unique = "Modern#1234", const std::string &age = "Adult" )
+{
+    return "<UserInfoResponse><SignedIn>true</SignedIn><Xuid>" + xuid + "</Xuid><Gamertag>" + gamertag +
+           "</Gamertag><ModernGamertag>" + modern + "</ModernGamertag><ModernGamertagSuffix>" + suffix +
+           "</ModernGamertagSuffix><UniqueModernGamertag>" + unique + "</UniqueModernGamertag><AgeGroup>" + age +
+           "</AgeGroup></UserInfoResponse>";
+}
+
+class XUserSignedIn : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        if (GetFileAttributesA( "Z:\\tmp\\xodus.sock" ) != INVALID_FILE_ATTRIBUTES)
+            GTEST_SKIP() << "/tmp/xodus.sock exists: an xodus-service may be listening";
+    }
+
+    void TearDown() override
+    {
+        server.reset();
+        XGameRuntimeOptions options{ XGameRuntimeGameConfigSource::Default, nullptr };
+        XGameRuntimeInitializeWithOptions( &options );
+        XGameRuntimeUninitialize();
+    }
+
+    // Starts the test server. The process-wide client may still hold a connection to the previous test's
+    // server; its first request then fails once and reconnects (see StaleConnectionFailsOnceThenReconnects),
+    // so a throwaway add absorbs that unless the test starts from a known-closed client (flush false).
+    void Serve( const std::string &reply, bool flush = true )
+    {
+        server.reset();
+        server = std::make_unique<XodusTest::TestServer>( XTS_MODE_SERVE, "/tmp/xodus.sock", reply );
+        if (!flush) return;
+        XUserHandle h = nullptr;
+        if (Add( XUserAddOptions::None, &h ) == S_OK) XUserCloseHandle( h );
+    }
+
+    static void UseConfig( XGameRuntimeGameConfigSource source, const char *config )
+    {
+        XGameRuntimeOptions options{ source, config };
+        ASSERT_EQ( S_OK, XGameRuntimeInitializeWithOptions( &options ) );
+    }
+
+    // Runs one XUserAddAsync to completion; returns the XUserAddResult HRESULT and the handle (null on failure).
+    static HRESULT Add( XUserAddOptions opt, XUserHandle *user )
+    {
+        AddWait w;
+        XAsyncBlock async = {};
+        async.context = &w;
+        async.callback = AddCompleted;
+        HRESULT hr = XUserAddAsync( opt, &async );
+        if (hr != S_OK) return hr;
+        if (WaitForSingleObject( w.event, 5000 ) != WAIT_OBJECT_0) return HRESULT_FROM_WIN32( WAIT_TIMEOUT );
+        *user = reinterpret_cast<XUserHandle>( 0x1234 );
+        return XUserAddResult( &async, user );
+    }
+
+    static std::string Tag( XUserHandle u, XUserGamertagComponent c )
+    {
+        char buf[64] = {};
+        SIZE_T used = 0;
+        EXPECT_EQ( S_OK, XUserGetGamertag( u, c, sizeof( buf ), buf, &used ) );
+        return buf;
+    }
+
+    std::unique_ptr<XodusTest::TestServer> server;
+};
+
+} // namespace
+
+// (1) one add, every getter returns the served value.
+TEST_F( XUserSignedIn, AddReturnsServedIdentity )
+{
+    Serve( UserInfoReply( "2535400000123456", "ClassicTag", "ModernTag", "9876", "ModernTag#9876", "Teen" ) );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::AddDefaultUserSilently, &u ) );
+    ASSERT_NE( nullptr, u );
+
+    UINT64 xuid = 0;
+    ASSERT_EQ( S_OK, XUserGetId( u, &xuid ) );
+    EXPECT_EQ( 2535400000123456ull, xuid );
+
+    XUserLocalId local{ 0 };
+    ASSERT_EQ( S_OK, XUserGetLocalId( u, &local ) );
+    EXPECT_EQ( 1u, local.value );
+
+    EXPECT_EQ( "ClassicTag", Tag( u, XUserGamertagComponent::Classic ) );
+    EXPECT_EQ( "ModernTag", Tag( u, XUserGamertagComponent::Modern ) );
+    EXPECT_EQ( "9876", Tag( u, XUserGamertagComponent::ModernSuffix ) );
+    EXPECT_EQ( "ModernTag#9876", Tag( u, XUserGamertagComponent::UniqueModern ) );
+
+    XUserState state = XUserState::SignedOut;
+    ASSERT_EQ( S_OK, XUserGetState( u, &state ) );
+    EXPECT_EQ( XUserState::SignedIn, state );
+
+    XUserAgeGroup age = XUserAgeGroup::Unknown;
+    ASSERT_EQ( S_OK, XUserGetAgeGroup( u, &age ) );
+    EXPECT_EQ( XUserAgeGroup::Teen, age );
+
+    XUserCloseHandle( u );
+}
+
+TEST_F( XUserSignedIn, GamertagBufferSizing )
+{
+    Serve( UserInfoReply( "4242", "ClassicTag", "ModernTag", "9876", "ModernTag#9876" ) );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+
+    struct { XUserGamertagComponent c; const char *text; } cases[] = {
+        { XUserGamertagComponent::Classic, "ClassicTag" },
+        { XUserGamertagComponent::Modern, "ModernTag" },
+        { XUserGamertagComponent::ModernSuffix, "9876" },
+        { XUserGamertagComponent::UniqueModern, "ModernTag#9876" },
+    };
+    for (auto &t : cases)
+    {
+        SIZE_T need = strlen( t.text ) + 1;
+        char buf[64];
+
+        // Exact fit with terminator.
+        memset( buf, 'x', sizeof( buf ) );
+        SIZE_T used = 0;
+        EXPECT_EQ( S_OK, XUserGetGamertag( u, t.c, need, buf, &used ) ) << t.text;
+        EXPECT_EQ( need, used );
+        EXPECT_STREQ( t.text, buf );
+
+        // One byte too small: required size reported, buffer untouched.
+        memset( buf, 'x', sizeof( buf ) );
+        used = 0;
+        EXPECT_EQ( HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ), XUserGetGamertag( u, t.c, need - 1, buf, &used ) ) << t.text;
+        EXPECT_EQ( need, used );
+        EXPECT_EQ( 'x', buf[0] );
+
+        // Size query with no buffer.
+        used = 0;
+        EXPECT_EQ( HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ), XUserGetGamertag( u, t.c, 0, nullptr, &used ) ) << t.text;
+        EXPECT_EQ( need, used );
+    }
+
+    XUserCloseHandle( u );
+}
+
+TEST_F( XUserSignedIn, AgeGroupMapping )
+{
+    Serve( UserInfoReply() );
+    struct { const char *served; XUserAgeGroup expected; } cases[] = {
+        { "Child", XUserAgeGroup::Child },
+        { "Teen", XUserAgeGroup::Teen },
+        { "Adult", XUserAgeGroup::Adult },
+        { "Unknown", XUserAgeGroup::Unknown },
+    };
+    for (auto &t : cases)
+    {
+        server->SetReply( UserInfoReply( "4242", "Age", "Age", "1", "Age#1", t.served ) );
+        XUserHandle u = nullptr;
+        ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) ) << t.served;
+        XUserAgeGroup age = static_cast<XUserAgeGroup>( 99 );
+        ASSERT_EQ( S_OK, XUserGetAgeGroup( u, &age ) );
+        EXPECT_EQ( t.expected, age ) << t.served;
+        XUserCloseHandle( u );
+    }
+}
+
+// (2) a second add returns the same object with one more reference.
+TEST_F( XUserSignedIn, SecondAddReturnsSameHandleWithExtraRef )
+{
+    Serve( UserInfoReply() );
+    XUserHandle a = nullptr, b = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &a ) );
+    LONG afterFirst = a->refs.load();
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &b ) );
+    EXPECT_EQ( a, b );
+    EXPECT_EQ( afterFirst + 1, a->refs.load() );
+
+    XUserCloseHandle( b );
+    EXPECT_EQ( afterFirst, a->refs.load() );
+    XUserCloseHandle( a );
+    EXPECT_EQ( afterFirst - 1, a->refs.load() ); // the DLL's own reference remains, so the object stays valid
+    EXPECT_GE( a->refs.load(), 1 );
+}
+
+// (3) every option reaches the same signed-in user.
+TEST_F( XUserSignedIn, AllAddOptionsSucceed )
+{
+    Serve( UserInfoReply() );
+    const XUserAddOptions options[] = { XUserAddOptions::None, XUserAddOptions::AddDefaultUserSilently, XUserAddOptions::AddDefaultUserAllowingUI };
+    XUserHandle first = nullptr;
+    for (XUserAddOptions opt : options)
+    {
+        XUserHandle u = nullptr;
+        ASSERT_EQ( S_OK, Add( opt, &u ) ) << (UINT32)opt;
+        ASSERT_NE( nullptr, u );
+        if (!first) first = u;
+        EXPECT_EQ( first, u );
+        UINT64 xuid = 0;
+        EXPECT_EQ( S_OK, XUserGetId( u, &xuid ) );
+        EXPECT_EQ( 4242u, xuid );
+        XUserCloseHandle( u );
+    }
+}
+
+// (4) request content, as the server received it.
+TEST_F( XUserSignedIn, RequestCarriesTitleIdAndForceRefreshFalse )
+{
+    // Default config beside the exe: TitleId 35760C07, no MSAAppId.
+    Serve( UserInfoReply() );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    auto frame = server->LastFrame();
+    EXPECT_EQ( 7, frame.first );
+    EXPECT_EQ( "<UserInfoRequest><TitleId>896928775</TitleId><ForceRefresh>false</ForceRefresh></UserInfoRequest>", frame.second );
+    XUserCloseHandle( u );
+}
+
+TEST_F( XUserSignedIn, RequestCarriesClientIdWhenConfigured )
+{
+    UseConfig( XGameRuntimeGameConfigSource::Inline, "<Game><TitleId>0000ABCD</TitleId><MSAAppId>  my-app  </MSAAppId></Game>" );
+    Serve( UserInfoReply() );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( "<UserInfoRequest><ClientId>my-app</ClientId><TitleId>43981</TitleId><ForceRefresh>false</ForceRefresh></UserInfoRequest>",
+               server->LastFrame().second );
+    XUserCloseHandle( u );
+}
+
+TEST_F( XUserSignedIn, RequestOmitsTitleIdWhenOnlyClientIdReadable )
+{
+    UseConfig( XGameRuntimeGameConfigSource::Inline, "<Game><MSAAppId>only-app</MSAAppId></Game>" );
+    Serve( UserInfoReply() );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( "<UserInfoRequest><ClientId>only-app</ClientId><ForceRefresh>false</ForceRefresh></UserInfoRequest>",
+               server->LastFrame().second );
+    XUserCloseHandle( u );
+}
+
+// (8) an unreadable or malformed config still adds; the request just leaves both identifiers out.
+TEST_F( XUserSignedIn, MissingConfigFileOmitsBothIdentifiers )
+{
+    UseConfig( XGameRuntimeGameConfigSource::File, "C:\\xuser-no-such-dir\\MicrosoftGame.config" );
+    Serve( UserInfoReply() );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( "<UserInfoRequest><ForceRefresh>false</ForceRefresh></UserInfoRequest>", server->LastFrame().second );
+    XUserCloseHandle( u );
+}
+
+TEST_F( XUserSignedIn, MalformedConfigOmitsBothIdentifiers )
+{
+    UseConfig( XGameRuntimeGameConfigSource::Inline, "<Game><TitleId>nothex</TitleId><MSAAppId>   </MSAAppId></Game>" );
+    Serve( UserInfoReply() );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( "<UserInfoRequest><ForceRefresh>false</ForceRefresh></UserInfoRequest>", server->LastFrame().second );
+    XUserCloseHandle( u );
+}
+
+// (5) service replies.
+TEST_F( XUserSignedIn, NotSignedInReplyIsNoDefaultUser )
+{
+    Serve( "<UserInfoResponse><SignedIn>false</SignedIn></UserInfoResponse>" );
+    XUserHandle u = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( kNoDefaultUser, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( nullptr, u );
+}
+
+TEST_F( XUserSignedIn, ServiceErrorHresultPassesThrough )
+{
+    Serve( UserInfoReply() );
+    const struct { const char *code; HRESULT expected; } cases[] = {
+        { "0x89245103", (HRESULT)0x89245103 },
+        { "0x80070005", (HRESULT)0x80070005 },
+        { "0xC0000001", (HRESULT)0xC0000001 },
+    };
+    for (auto &t : cases)
+    {
+        server->SetReply( std::string( "<UserInfoResponse><Error>" ) + t.code + "</Error><Message>boom</Message></UserInfoResponse>" );
+        XUserHandle u = reinterpret_cast<XUserHandle>( 0x1234 );
+        EXPECT_EQ( t.expected, Add( XUserAddOptions::None, &u ) ) << t.code;
+        EXPECT_EQ( nullptr, u );
+    }
+}
+
+TEST_F( XUserSignedIn, ServiceErrorWithNonFailureCodeIsEFail )
+{
+    Serve( UserInfoReply() );
+    // Well-formed 0x%08X codes that are not failures cannot be passed through.
+    for (const char *code : { "0x00000000", "0x00000001", "0x7FFFFFFF" })
+    {
+        server->SetReply( std::string( "<UserInfoResponse><Error>" ) + code + "</Error></UserInfoResponse>" );
+        XUserHandle u = reinterpret_cast<XUserHandle>( 0x1234 );
+        EXPECT_EQ( E_FAIL, Add( XUserAddOptions::None, &u ) ) << code;
+        EXPECT_EQ( nullptr, u );
+    }
+}
+
+TEST_F( XUserSignedIn, UnparsableErrorReplyIsNoDefaultUser )
+{
+    // An <Error> that is outside the wire grammar makes the reply unusable, which callers see as no default user.
+    Serve( "<UserInfoResponse><Error>oops</Error></UserInfoResponse>" );
+    XUserHandle u = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( kNoDefaultUser, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( nullptr, u );
+}
+
+TEST_F( XUserSignedIn, InvalidXuidIsInvalidData )
+{
+    Serve( UserInfoReply() );
+    for (const char *xuid : { "", "0", "abc", "-5", "12 34", "18446744073709551616" })
+    {
+        server->SetReply( UserInfoReply( xuid ) );
+        XUserHandle u = reinterpret_cast<XUserHandle>( 0x1234 );
+        EXPECT_EQ( HRESULT_FROM_WIN32( ERROR_INVALID_DATA ), Add( XUserAddOptions::None, &u ) ) << "xuid '" << xuid << "'";
+        EXPECT_EQ( nullptr, u );
+    }
+}
+
+TEST_F( XUserSignedIn, LargestXuidIsAccepted )
+{
+    Serve( UserInfoReply( "18446744073709551615" ) );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    UINT64 xuid = 0;
+    EXPECT_EQ( S_OK, XUserGetId( u, &xuid ) );
+    EXPECT_EQ( UINT64_MAX, xuid );
+    XUserCloseHandle( u );
+}
+
+TEST_F( XUserSignedIn, RejectedReplyDoesNotChangeExistingUser )
+{
+    Serve( UserInfoReply( "4242", "Keep" ) );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+
+    server->SetReply( UserInfoReply( "0", "Replaced" ) );
+    XUserHandle bad = nullptr;
+    EXPECT_EQ( HRESULT_FROM_WIN32( ERROR_INVALID_DATA ), Add( XUserAddOptions::None, &bad ) );
+
+    EXPECT_EQ( "Keep", Tag( u, XUserGamertagComponent::Classic ) );
+    UINT64 xuid = 0;
+    EXPECT_EQ( S_OK, XUserGetId( u, &xuid ) );
+    EXPECT_EQ( 4242u, xuid );
+    XUserCloseHandle( u );
+}
+
+// (6) a failed attempt with no server is not remembered.
+TEST_F( XUserSignedIn, AddRecoversAfterServerAppears )
+{
+    // The first failure may only absorb a dead connection left by the previous test; the second is a real
+    // connect failure, which must not leave the client believing it is connected.
+    XUserHandle u = reinterpret_cast<XUserHandle>( 0x1234 );
+    ASSERT_EQ( kNoDefaultUser, Add( XUserAddOptions::None, &u ) );
+    u = reinterpret_cast<XUserHandle>( 0x1234 );
+    ASSERT_EQ( kNoDefaultUser, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( nullptr, u );
+
+    Serve( UserInfoReply( "777", "Recovered" ), false );
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    ASSERT_NE( nullptr, u );
+    UINT64 xuid = 0;
+    EXPECT_EQ( S_OK, XUserGetId( u, &xuid ) );
+    EXPECT_EQ( 777u, xuid );
+    XUserCloseHandle( u );
+
+    // And it fails again once the server is gone.
+    server.reset();
+    u = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( kNoDefaultUser, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( nullptr, u );
+}
+
+// A server restart leaves the client holding a dead connection: that one request fails, the next reconnects.
+TEST_F( XUserSignedIn, StaleConnectionFailsOnceThenReconnects )
+{
+    Serve( UserInfoReply( "4242", "Old" ) );
+    XUserHandle u = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    XUserCloseHandle( u );
+
+    Serve( UserInfoReply( "4242", "New" ), false );
+    u = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( kNoDefaultUser, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( nullptr, u );
+
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &u ) );
+    EXPECT_EQ( "New", Tag( u, XUserGamertagComponent::Classic ) );
+    XUserCloseHandle( u );
+}
+
+// (7) a later add refreshes the identity seen through earlier handles.
+TEST_F( XUserSignedIn, LaterAddRefreshesEarlierHandle )
+{
+    Serve( UserInfoReply( "4242", "Before", "Before", "1", "Before#1", "Child" ) );
+    XUserHandle first = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &first ) );
+    EXPECT_EQ( "Before", Tag( first, XUserGamertagComponent::Classic ) );
+
+    server->SetReply( UserInfoReply( "4343", "After", "After", "2", "After#2", "Adult" ) );
+    XUserHandle second = nullptr;
+    ASSERT_EQ( S_OK, Add( XUserAddOptions::None, &second ) );
+    EXPECT_EQ( first, second );
+
+    EXPECT_EQ( "After", Tag( first, XUserGamertagComponent::Classic ) );
+    EXPECT_EQ( "After", Tag( first, XUserGamertagComponent::Modern ) );
+    EXPECT_EQ( "2", Tag( first, XUserGamertagComponent::ModernSuffix ) );
+    EXPECT_EQ( "After#2", Tag( first, XUserGamertagComponent::UniqueModern ) );
+    UINT64 xuid = 0;
+    EXPECT_EQ( S_OK, XUserGetId( first, &xuid ) );
+    EXPECT_EQ( 4343u, xuid );
+    XUserAgeGroup age = XUserAgeGroup::Unknown;
+    EXPECT_EQ( S_OK, XUserGetAgeGroup( first, &age ) );
+    EXPECT_EQ( XUserAgeGroup::Adult, age );
+
+    // Finds use the refreshed xuid.
+    XUserHandle found = nullptr;
+    EXPECT_EQ( S_OK, XUserFindUserById( 4343, &found ) );
+    EXPECT_EQ( first, found );
+    XUserCloseHandle( found );
+    found = reinterpret_cast<XUserHandle>( 0x1234 );
+    EXPECT_EQ( (HRESULT)0x89245104, XUserFindUserById( 4242, &found ) );
+    EXPECT_EQ( nullptr, found );
+
+    XUserCloseHandle( second );
+    XUserCloseHandle( first );
 }

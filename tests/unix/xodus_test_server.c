@@ -62,7 +62,11 @@ static struct
     atomic_uint accepted;
     atomic_uint frames_answered;
     atomic_ullong bytes_received;
-} srv = { .listen_fd = -1 };
+    pthread_mutex_t last_lock;
+    uint16_t last_type;
+    uint32_t last_len;
+    uint8_t last_body[MAX_PAYLOAD];
+} srv = { .listen_fd = -1, .last_lock = PTHREAD_MUTEX_INITIALIZER };
 
 static int wait_readable( int fd )
 {
@@ -120,10 +124,20 @@ static void serve( int fd )
             memcpy( &type, buf + 4, 2 );
             memcpy( &len, buf + 6, 2 );
             if (have < HEADER_SIZE + len) break;
+            pthread_mutex_lock( &srv.last_lock );
+            srv.last_type = type;
+            srv.last_len = len;
+            memcpy( srv.last_body, buf + HEADER_SIZE, len );
+            pthread_mutex_unlock( &srv.last_lock );
             if (type == 1 && reply( fd, 2, buf + HEADER_SIZE, len )) return;
-            if (type == 3 && reply( fd, 4, srv.resp, srv.resp_len )) return;
-            if (type == 5 && reply( fd, 6, srv.resp, srv.resp_len )) return;
-            if (type == 7 && reply( fd, 8, srv.resp, srv.resp_len )) return;
+            if (type == 3 || type == 5 || type == 7)
+            {
+                int failed;
+                pthread_mutex_lock( &srv.last_lock );
+                failed = reply( fd, type + 1, srv.resp, srv.resp_len );
+                pthread_mutex_unlock( &srv.last_lock );
+                if (failed) return;
+            }
             atomic_fetch_add( &srv.frames_answered, 1 );
             memmove( buf, buf + HEADER_SIZE + len, have - HEADER_SIZE - len );
             have -= HEADER_SIZE + len;
@@ -170,6 +184,8 @@ static NTSTATUS xts_start( void *args )
     atomic_store( &srv.accepted, 0 );
     atomic_store( &srv.frames_answered, 0 );
     atomic_store( &srv.bytes_received, 0 );
+    srv.last_type = 0;
+    srv.last_len = 0;
 
     unlink( srv.path );
     srv.listen_fd = socket( AF_UNIX, SOCK_STREAM, 0 );
@@ -201,6 +217,34 @@ static NTSTATUS xts_stats( void *args )
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS xts_last( void *args )
+{
+    struct xts_last_args *a = args;
+
+    pthread_mutex_lock( &srv.last_lock );
+    a->type = srv.last_type;
+    a->len = srv.last_len;
+    memcpy( a->buf, srv.last_body, srv.last_len < a->cap ? srv.last_len : a->cap );
+    pthread_mutex_unlock( &srv.last_lock );
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS xts_setresp( void *args )
+{
+    struct xts_setresp_args *a = args;
+    uint8_t *copy = a->resp_len ? malloc( a->resp_len ) : NULL;
+    uint8_t *old;
+
+    if (a->resp_len) memcpy( copy, a->resp, a->resp_len );
+    pthread_mutex_lock( &srv.last_lock );
+    old = srv.resp;
+    srv.resp = copy;
+    srv.resp_len = a->resp_len;
+    pthread_mutex_unlock( &srv.last_lock );
+    free( old );
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS xts_stop( void *args )
 {
     struct xts_stop_args *a = args;
@@ -224,4 +268,6 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     xts_start,
     xts_stats,
     xts_stop,
+    xts_last,
+    xts_setresp,
 };

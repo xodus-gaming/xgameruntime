@@ -22,6 +22,7 @@
 
 #include <windows.h>
 #include <atomic>
+#include <string>
 #include <xuser.h>
 
 struct XUser
@@ -29,6 +30,9 @@ struct XUser
     UINT32 signature;
     std::atomic<LONG> refs;
     XUserLocalId localId;
+    UINT64 xuid;
+    XUserAgeGroup ageGroup;
+    std::string gamertag, modernGamertag, modernGamertagSuffix, uniqueModernGamertag;
 };
 
 constexpr UINT32 XUSER_SIGNATURE = 0x52535558; // 'XUSR'

@@ -25,7 +25,7 @@
 #include <stdint.h>
 
 /* __wine_unix_call_funcs entry indices of xodus_test_server.so. */
-enum { XTS_CALL_START = 0, XTS_CALL_STATS = 1, XTS_CALL_STOP = 2 };
+enum { XTS_CALL_START = 0, XTS_CALL_STATS = 1, XTS_CALL_STOP = 2, XTS_CALL_LAST = 3, XTS_CALL_SETRESP = 4 };
 
 /* What the server does with a connection. */
 enum
@@ -42,5 +42,11 @@ struct xts_start_args { const char *path; int32_t mode; const uint8_t *resp; uin
 struct xts_stats_args { uint32_t accepted; uint32_t frames_answered; uint64_t bytes_received; };
 
 struct xts_stop_args { int32_t status; };
+
+/* in: resp/resp_len, the new reply payload for MSA, token and user info requests (copied); takes effect for the next reply on a live connection. */
+struct xts_setresp_args { const uint8_t *resp; uint32_t resp_len; };
+
+/* in: buf/cap. out: type and len of the last frame received (len 0, type 0 when none since start), body copied up to cap. */
+struct xts_last_args { uint8_t *buf; uint32_t cap; uint16_t type; uint32_t len; };
 
 #endif

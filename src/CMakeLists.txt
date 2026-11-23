@@ -15,7 +15,8 @@ target_sources(xgameruntime-impl PRIVATE
         System/XGame.cpp
         System/XThreading.cpp
         System/XUser.cpp
-        System/XUserDevice.cpp )
+        System/XUserDevice.cpp
+        System/XUserIdentity.cpp )
 
 # System/Threading (based on libHttpClient)
 target_sources(xgameruntime-impl PRIVATE
@@ -27,6 +28,7 @@ target_sources(xgameruntime-impl PRIVATE
 # Xodus
 target_sources(xgameruntime-impl PRIVATE
         Xodus/IpcFraming.cpp
+        Xodus/SharedClient.cpp
         Xodus/UnixTransport.cpp
         Xodus/XodusClient.cpp
         Xodus/XodusXml.cpp )
