@@ -108,6 +108,11 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_user_impl->QueryInterface( iid, out );
     }
 
+    if ( IsEqualGUID( clsid, CLSID_XUserDeviceImpl ) )
+    {
+        return x_user_device_impl->QueryInterface( iid, out );
+    }
+
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
     return REGDB_E_CLASSNOTREG;
 }
