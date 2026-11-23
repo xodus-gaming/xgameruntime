@@ -14,7 +14,8 @@ target_sources(xgameruntime-impl PRIVATE
         GameConfig.cpp
         System/XGame.cpp
         System/XThreading.cpp
-        System/XUser.cpp )
+        System/XUser.cpp
+        System/XUserDevice.cpp )
 
 # System/Threading (based on libHttpClient)
 target_sources(xgameruntime-impl PRIVATE

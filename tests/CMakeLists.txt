@@ -14,6 +14,7 @@ add_executable(test_xgameruntime
         ${CMAKE_SOURCE_DIR}/src/Xodus/UnixTransport.cpp
         ${CMAKE_SOURCE_DIR}/src/Xodus/XodusClient.cpp
         ${CMAKE_SOURCE_DIR}/src/Xodus/XodusXml.cpp
+        System/test_xuser.cpp
         test_fixtures.cpp)
 
 target_compile_definitions(test_xgameruntime
