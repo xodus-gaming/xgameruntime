@@ -103,6 +103,11 @@ HRESULT WINAPI QueryApiImpl( REFCLSID clsid, REFIID iid, void **out )
         return x_threading_impl->QueryInterface( iid, out );
     }
 
+    if ( IsEqualGUID( clsid, CLSID_XErrorImpl ) )
+    {
+        return x_error_impl->QueryInterface( iid, out );
+    }
+
     FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( &clsid ) );
     return REGDB_E_CLASSNOTREG;
 }
@@ -115,8 +120,8 @@ HRESULT WINAPI UninitializeApiImpl()
 
 HRESULT WINAPI XErrorReport( HRESULT status, LPCSTR message )
 {
-    TRACE("stub!\n");
-    return E_NOTIMPL;
+    x_error_impl->XErrorReport( status, message );
+    return S_OK;
 }
 
 #ifdef __cplusplus

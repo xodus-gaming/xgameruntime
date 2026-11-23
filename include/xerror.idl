@@ -42,7 +42,7 @@ typedef enum XErrorOptions
 
 cpp_quote("#endif")
 
-typedef void __stdcall XErrorCallback( HRESULT hr, const char *msg, void *context );
+typedef BOOLEAN __stdcall XErrorCallback( HRESULT hr, const char *msg, void *context );
 
 cpp_quote("#ifdef __WINESRC__")
 
@@ -53,7 +53,7 @@ cpp_quote("#ifdef __WINESRC__")
 ]
 interface IXErrorImpl : IUnknown
 {
-    HRESULT __PADDING__();
+    void    XErrorReport( [in] HRESULT hr, [in] LPCSTR message );
     void    XErrorSetCallback( [in] XErrorCallback *callback, [in] void *context );
     void    XErrorSetOptions( XErrorOptions optionsDebuggerPresent, XErrorOptions optionsDebuggerNotPresent );
 }
@@ -66,4 +66,14 @@ coclass XErrorImpl
     [default] interface IXErrorImpl;
 }
 
+cpp_quote("#endif")
+
+/* The XError functions libxgameruntime exports, with C linkage so that C and C++ callers find them. */
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("extern \"C\" {")
+cpp_quote("#endif")
+cpp_quote("void __stdcall XErrorSetCallback( XErrorCallback *callback, void *context );")
+cpp_quote("void __stdcall XErrorSetOptions( XErrorOptions optionsDebuggerPresent, XErrorOptions optionsDebuggerNotPresent );")
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("}")
 cpp_quote("#endif")
