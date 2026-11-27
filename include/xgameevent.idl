@@ -41,4 +41,6 @@ coclass XGameEventImpl
     [default] interface IXGameEventImpl;
 }
 
+HRESULT __stdcall XGameEventWrite( [in] XUserHandle user, [in, string] const char *serviceConfigId, [in, string] const char *playSessionId, [in, string] const char *eventName, [in, optional, string] const char *dimensionsJson, [in, optional, string] const char *measurementsJson );
+
 cpp_quote("#endif")

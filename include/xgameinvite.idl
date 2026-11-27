@@ -56,4 +56,11 @@ coclass XGameInviteImpl
     [default] interface IXGameInviteImpl2;
 }
 
+HRESULT __stdcall XGameInviteRegisterForEvent( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XGameInviteEventCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XGameInviteUnregisterForEvent( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+
+HRESULT __stdcall XGameInviteRegisterForPendingEvent( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XGameInviteEventCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XGameInviteUnregisterForPendingEvent( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XGameInviteAcceptPendingInvite( [in, string] const char *inviteUri );
+
 cpp_quote("#endif")

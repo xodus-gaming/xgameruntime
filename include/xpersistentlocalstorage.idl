@@ -76,4 +76,12 @@ coclass XPersistentLocalStorageImpl
     [default] interface IXPersistentLocalStorageImpl3;
 }
 
+HRESULT __stdcall XPersistentLocalStorageGetPathSize( [out] SIZE_T *pathSize );
+HRESULT __stdcall XPersistentLocalStorageGetPath( [in] SIZE_T pathSize, [out, string, size_is(pathSize)] char *path, [out, optional] SIZE_T *pathUsed );
+HRESULT __stdcall XPersistentLocalStorageGetSpaceInfo( [out] XPersistentLocalStorageSpaceInfo *info );
+HRESULT __stdcall XPersistentLocalStoragePromptUserForSpaceAsync( [in] UINT64 requestedBytes, [in, out] XAsyncBlock *asyncBlock );
+HRESULT __stdcall XPersistentLocalStoragePromptUserForSpaceResult( [in, out] XAsyncBlock *asyncBlock );
+
+HRESULT __stdcall XPersistentLocalStorageMountForPackage( [in, string] const char *packageIdentifier, [out] XPackageMountHandle *mountHandle );
+
 cpp_quote("#endif")

@@ -319,4 +319,39 @@ coclass XGameStreamingImpl
     [default] interface IXGameStreamingImpl3;
 }
 
+HRESULT __stdcall XGameStreamingInitialize();
+void __stdcall XGameStreamingUninitialize();
+BOOLEAN __stdcall XGameStreamingIsStreaming();
+HRESULT __stdcall XGameStreamingRegisterClientPropertiesChanged( [in] XGameStreamingClientId client, [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XGameStreamingClientPropertiesChangedCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XGameStreamingUnregisterClientPropertiesChanged( [in] XGameStreamingClientId client, [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XGameStreamingGetStreamPhysicalDimensions( [in] XGameStreamingClientId client, [out] UINT32 *horizontalMm, [out] UINT32 *verticalMm );
+UINT32 __stdcall XGameStreamingGetClientCount();
+HRESULT __stdcall XGameStreamingGetClients( [in] UINT32 clientCount, [out, length_is(clientCount)] XGameStreamingClientId clients[*], [out, optional] UINT32 *clientsUsed );
+XGameStreamingConnectionState __stdcall XGameStreamingGetConnectionState( [in] XGameStreamingClientId client );
+HRESULT __stdcall XGameStreamingRegisterConnectionStateChanged( [in] XTaskQueueHandle queue, [in, optional] void *context, [in] XGameStreamingConnectionStateChangedCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XGameStreamingUnregisterConnectionStateChanged( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XGameStreamingGetStreamAddedLatency( [in] XGameStreamingClientId client, [out] UINT32 *averageInputLatencyUs, [out] UINT32 *averageOutputLatencyUs, [out] UINT32 *standardDeviationUs );
+SIZE_T __stdcall XGameStreamingGetServerLocationNameSize();
+HRESULT __stdcall XGameStreamingGetServerLocationName( [in] SIZE_T serverLocationNameSize, [out, string, size_is(serverLocationNameSize)] char *serverLocationName );
+void __stdcall XGameStreamingHideTouchControls();
+void __stdcall XGameStreamingShowTouchControlLayout( [in, optional, string] const char *layout );
+void __stdcall XGameStreamingHideTouchControlsOnClient( [in] XGameStreamingClientId client );
+void __stdcall XGameStreamingShowTouchControlLayoutOnClient( [in] XGameStreamingClientId client, [in, optional, string] const char *layout );
+HRESULT __stdcall XGameStreamingIsTouchInputEnabled( [in] XGameStreamingClientId client, [out] BOOLEAN *touchInputEnabled );
+HRESULT __stdcall XGameStreamingGetLastFrameDisplayed( [in] XGameStreamingClientId client, [out] D3D12XBOX_FRAME_PIPELINE_TOKEN *framePipelineToken );
+HRESULT __stdcall XGameStreamingGetAssociatedFrame( [in] IGameInputReading *gamepadReading, [out] D3D12XBOX_FRAME_PIPELINE_TOKEN *framePipelineToken );
+HRESULT __stdcall XGameStreamingGetGamepadPhysicality( [in] IGameInputReading *gamepadReading, [out] XGameStreamingGamepadPhysicality *gamepadPhysicality );
+HRESULT __stdcall XGameStreamingUpdateTouchControlsState( [in] SIZE_T operationCount, [in, optional, length_is(operationCount)] const XGameStreamingTouchControlsStateOperation operations[*] );
+HRESULT __stdcall XGameStreamingUpdateTouchControlsStateOnClient( [in] XGameStreamingClientId client, [in] SIZE_T operationCount, [in, optional, length_is(operationCount)] const XGameStreamingTouchControlsStateOperation operations[*] );
+HRESULT __stdcall XGameStreamingShowTouchControlsWithStateUpdate( [in, optional, string] const char *layout, [in] SIZE_T operationCount, [in, optional, length_is(operationCount)] const XGameStreamingTouchControlsStateOperation operations[*] );
+HRESULT __stdcall XGameStreamingShowTouchControlsWithStateUpdateOnClient( [in] XGameStreamingClientId client, [in, optional, string] const char *layout, [in] SIZE_T operationCount, [in, optional, length_is(operationCount)] const XGameStreamingTouchControlsStateOperation operations[*] );
+SIZE_T __stdcall XGameStreamingGetTouchBundleVersionNameSize( [in] XGameStreamingClientId client );
+HRESULT __stdcall XGameStreamingGetTouchBundleVersion( [in] XGameStreamingClientId client, [out, optional] XVersion *version, [in] SIZE_T versionNameSize, [out, optional, string, size_is(versionNameSize)] char *versionName );
+HRESULT __stdcall XGameStreamingGetClientIPAddress( [in] XGameStreamingClientId client, [in] SIZE_T ipAddressSize, [out, string, size_is(ipAddressSize)] char *ipAddress );
+
+HRESULT __stdcall XGameStreamingGetSessionId( [in] XGameStreamingClientId client, [in] SIZE_T sessionIdSize, [out, string, size_is(sessionIdSize)] char *sessionId, [out, optional] SIZE_T *sessionIdUsed );
+
+HRESULT __stdcall XGameStreamingGetDisplayDetails( [in] XGameStreamingClientId client, [in] UINT32 maxSupportedPixels, [in] float widestSupportedAspectRatio, [in] float tallestSupportedAspectRatio, [out] XGameStreamingDisplayDetails *displayDetails );
+HRESULT __stdcall XGameStreamingSetResolution( [in] UINT32 width, [in] UINT32 height );
+
 cpp_quote("#endif")

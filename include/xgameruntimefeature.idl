@@ -95,3 +95,5 @@ coclass XGameRuntimeFeatureImpl
 {
     [default] interface IXGameRuntimeFeatureImpl;
 }
+
+BOOLEAN __stdcall XGameRuntimeIsFeatureAvailable( [in] XGameRuntimeFeature feature );
