@@ -26,8 +26,10 @@
 
 void XGameRuntimeTests::SetUpTestSuite()
 {
+    XGameRuntimeInitialize();
 }
 
 void XGameRuntimeTests::TearDownTestSuite()
 {
+    XGameRuntimeUninitialize();
 }
