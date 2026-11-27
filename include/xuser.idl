@@ -490,4 +490,67 @@ coclass XUserDeviceImpl
     [default] interface IXUserDeviceImpl2;
 }
 
+HRESULT __stdcall XUserDuplicateHandle( [in] XUserHandle handle, [out] XUserHandle *duplicatedHandle );
+void __stdcall XUserCloseHandle( [in] XUserHandle user );
+INT32 __stdcall XUserCompare( [in, optional] XUserHandle user1, [in, optional] XUserHandle user2 );
+HRESULT __stdcall XUserGetMaxUsers( [out] UINT32 *maxUsers );
+HRESULT __stdcall XUserAddAsync( [in] XUserAddOptions options, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserAddResult( [in, out] XAsyncBlock *async, [out] XUserHandle *newUser );
+HRESULT __stdcall XUserGetLocalId( [in] XUserHandle user, [out] XUserLocalId *userLocalId );
+HRESULT __stdcall XUserFindUserByLocalId( [in] XUserLocalId userLocalId, [out] XUserHandle *handle );
+HRESULT __stdcall XUserGetId( [in] XUserHandle user, [out] UINT64 *userId );
+HRESULT __stdcall XUserFindUserById( [in] UINT64 userId, [out] XUserHandle *handle );
+HRESULT __stdcall XUserGetIsGuest( [in] XUserHandle user, [out] BOOLEAN *isGuest );
+HRESULT __stdcall XUserGetState( [in] XUserHandle user, [out] XUserState *state );
+HRESULT __stdcall XUserGetGamerPictureAsync( [in] XUserHandle user, [in] XUserGamerPictureSize pictureSize, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserGetGamerPictureResultSize( [in, out] XAsyncBlock *async, [out] SIZE_T *bufferSize );
+HRESULT __stdcall XUserGetGamerPictureResult( [in, out] XAsyncBlock *async, [in] SIZE_T bufferSize, [out, size_is(bufferSize)] void *buffer, [out, optional] SIZE_T *bufferUsed );
+HRESULT __stdcall XUserGetAgeGroup( [in] XUserHandle user, [out] XUserAgeGroup *ageGroup );
+HRESULT __stdcall XUserCheckPrivilege( [in] XUserHandle user, [in] XUserPrivilegeOptions options, [in] XUserPrivilege privilege, [out] BOOLEAN *hasPrivilege, [out, optional] XUserPrivilegeDenyReason *reason );
+HRESULT __stdcall XUserResolvePrivilegeWithUiAsync( [in] XUserHandle user, [in] XUserPrivilegeOptions options, [in] XUserPrivilege privilege, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserResolvePrivilegeWithUiResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserGetTokenAndSignatureAsync( [in] XUserHandle user, [in] XUserGetTokenAndSignatureOptions options, [in, string] const char *method, [in, string] const char *url, [in] SIZE_T headerCount, [in, optional, length_is(headerCount)] const XUserGetTokenAndSignatureHttpHeader headers[*], [in] SIZE_T bodySize, [in, optional, size_is(bodySize)] const void *bodyBuffer, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserGetTokenAndSignatureResultSize( [in, out] XAsyncBlock *async, [out] SIZE_T *bufferSize );
+HRESULT __stdcall XUserGetTokenAndSignatureResult( [in, out] XAsyncBlock *async, [in] SIZE_T bufferSize, [out, size_is(bufferSize)] void *buffer, [out, ptr] XUserGetTokenAndSignatureData **ptrToBuffer, [out, optional] SIZE_T *bufferUsed );
+HRESULT __stdcall XUserGetTokenAndSignatureUtf16Async( [in] XUserHandle user, [in] XUserGetTokenAndSignatureOptions options, [in, string] const WCHAR *method, [in, string] const WCHAR *url, [in] SIZE_T headerCount, [in, optional, length_is(headerCount)] const XUserGetTokenAndSignatureUtf16HttpHeader headers[*], [in] SIZE_T bodySize, [in, optional, size_is(bodySize)] const void *bodyBuffer, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserGetTokenAndSignatureUtf16ResultSize( [in, out] XAsyncBlock *async, [out] SIZE_T *bufferSize );
+HRESULT __stdcall XUserGetTokenAndSignatureUtf16Result( [in, out] XAsyncBlock *async, [in] SIZE_T bufferSize, [out, size_is(bufferSize)] void *buffer, [out, ptr] XUserGetTokenAndSignatureUtf16Data **ptrToBuffer, [out, optional] SIZE_T *bufferUsed );
+HRESULT __stdcall XUserResolveIssueWithUiAsync( [in] XUserHandle user, [in, optional, string] const char *url, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserResolveIssueWithUiResult( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserResolveIssueWithUiUtf16Async( [in] XUserHandle user, [in, optional, string] const WCHAR *url, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserResolveIssueWithUiUtf16Result( [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserRegisterForChangeEvent( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XUserChangeEventCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XUserUnregisterForChangeEvent( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XUserGetSignOutDeferral( [out] XUserSignOutDeferralHandle *deferral );
+void __stdcall XUserCloseSignOutDeferralHandle( [in] XUserSignOutDeferralHandle deferral );
+
+HRESULT __stdcall XUserAddByIdWithUiAsync( [in] UINT64 userId, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserAddByIdWithUiResult( [in, out] XAsyncBlock *async, [out] XUserHandle *newUser );
+
+HRESULT __stdcall XUserGetMsaTokenSilentlyAsync( [in] XUserHandle user, [in] XUserGetMsaTokenSilentlyOptions options, [in, string] const char *scope, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserGetMsaTokenSilentlyResult( [in, out] XAsyncBlock *async, [in] SIZE_T resultTokenSize, [out, string, size_is(resultTokenSize)] char *resultToken, [out, optional] SIZE_T *resultTokenUsed );
+HRESULT __stdcall XUserGetMsaTokenSilentlyResultSize( [in, out] XAsyncBlock *async, [out] SIZE_T *tokenSize );
+
+BOOLEAN __stdcall XUserIsStoreUser( [in] XUserHandle user );
+
+HRESULT __stdcall XUserPlatformRemoteConnectSetEventHandlers( [in, optional] XTaskQueueHandle queue, [in] XUserPlatformRemoteConnectEventHandlers *handlers );
+HRESULT __stdcall XUserPlatformRemoteConnectCancelPrompt( [in] XUserPlatformOperation operation );
+HRESULT __stdcall XUserPlatformSpopPromptSetEventHandlers( [in, optional] XTaskQueueHandle queue, [in] XUserPlatformSpopPromptEventHandler *handler, [in, optional] void *context );
+HRESULT __stdcall XUserPlatformSpopPromptComplete( [in] XUserPlatformOperation operation, [in] XUserPlatformOperationResult result );
+
+BOOLEAN __stdcall XUserIsSignOutPresent();
+HRESULT __stdcall XUserSignOutAsync( [in] XUserHandle user, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserSignOutResult( [in, out] XAsyncBlock *async );
+
+HRESULT __stdcall XUserFindForDevice( [in] const APP_LOCAL_DEVICE_ID *deviceId, [out] XUserHandle *handle );
+HRESULT __stdcall XUserRegisterForDeviceAssociationChanged( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XUserDeviceAssociationChangedCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XUserUnregisterForDeviceAssociationChanged( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XUserGetDefaultAudioEndpointUtf16( [in] XUserLocalId user, [in] XUserDefaultAudioEndpointKind defaultAudioEndpointKind, [in] SIZE_T endpointIdUtf16Count, [out, string, length_is(endpointIdUtf16Count)] WCHAR endpointIdUtf16[*], [out, optional] SIZE_T *endpointIdUtf16Used );
+HRESULT __stdcall XUserRegisterForDefaultAudioEndpointUtf16Changed( [in, optional] XTaskQueueHandle queue, [in, optional] void *context, [in] XUserDefaultAudioEndpointUtf16ChangedCallback *callback, [out] XTaskQueueRegistrationToken *token );
+BOOLEAN __stdcall XUserUnregisterForDefaultAudioEndpointUtf16Changed( [in] XTaskQueueRegistrationToken token, [in] BOOLEAN wait );
+HRESULT __stdcall XUserFindControllerForUserWithUiAsync( [in] XUserHandle user, [in, out] XAsyncBlock *async );
+HRESULT __stdcall XUserFindControllerForUserWithUiResult( [in, out] XAsyncBlock *async, [out] APP_LOCAL_DEVICE_ID *deviceId );
+
+HRESULT __stdcall XUserGetGamertag( [in] XUserHandle user, [in] XUserGamertagComponent gamertagComponent, [in] SIZE_T gamertagSize, [out, string, size_is(gamertagSize)] char *gamertag, [out, optional] SIZE_T *gamertagUsed );
+
 cpp_quote("#endif")

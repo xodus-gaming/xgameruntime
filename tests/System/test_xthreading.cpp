@@ -25,7 +25,6 @@
 #include <windows.h>
 #include <xasync.h>
 #include <xasyncprovider.h>
-#include <xgameruntimeinit.h>
 
 #define EXPECT_QUEUE_EMPTY(q) { EXPECT_TRUE(XTaskQueueIsEmpty(q, XTaskQueuePort::Completion)); EXPECT_TRUE(XTaskQueueIsEmpty(q, XTaskQueuePort::Work)); }
 

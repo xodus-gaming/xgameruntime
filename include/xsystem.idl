@@ -207,4 +207,15 @@ coclass XSystemAnalyticsImpl
     [default] interface IXSystemAnalyticsImpl;
 }
 
+HRESULT __stdcall XSystemGetConsoleId( [in] INT32 consoleIdSize, [out, size_is(consoleIdSize)] char *consoleId, [out, optional] SIZE_T *consoleIdUsed );
+HRESULT __stdcall XSystemGetXboxLiveSandboxId( [in] INT32 sandboxIdSize, [out, size_is(sandboxIdSize)] char *sandboxId, [out] SIZE_T *sandboxIdUsed );
+HRESULT __stdcall XSystemGetAppSpecificDeviceId( [in] INT32 appSpecificDeviceIdSize, [out, size_is(appSpecificDeviceIdSize)] char *appSpecificDeviceId, [out, optional] SIZE_T *appSpecificDeviceIdUsed );
+
+HRESULT __stdcall XSystemHandleTrack( [in] XSystemHandleCallback callback, [in, optional] void *context );
+BOOLEAN __stdcall XSystemIsHandleValid( [in] XSystemHandle handle );
+
+void __stdcall XSystemAllowFullDownloadBandwidth( [in] BOOLEAN enable );
+
+XSystemAnalyticsInfo __stdcall XSystemGetAnalyticsInfo();
+
 cpp_quote("#endif")
